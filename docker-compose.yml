@@ -1,0 +1,80 @@
+name: webhacking-lab
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      WEBHACKING_ENVIRONMENT: production
+      WEBHACKING_DATABASE_URL: sqlite+aiosqlite:////app/data/webhacking_lab.db
+      WEBHACKING_CORS_ORIGINS: '["http://localhost:8080"]'
+      WEBHACKING_ANALYSIS_ONLY: "true"
+      WEBHACKING_NETWORK_EXECUTION_ENABLED: "false"
+      WEBHACKING_ALLOW_INSECURE_TLS: "false"
+    volumes:
+      - webhacking_data:/app/data
+    networks:
+      - application
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2)"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${WEBHACKING_FRONTEND_PORT:-8080}:8080"
+    networks:
+      - application
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=32m,mode=1777
+      - /var/run:size=8m,mode=1777
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+networks:
+  application:
+    driver: bridge
+  isolated_labs:
+    driver: bridge
+    internal: true
+    labels:
+      webhacking_lab.network-purpose: isolated-local-training
+
+volumes:
+  webhacking_data:
