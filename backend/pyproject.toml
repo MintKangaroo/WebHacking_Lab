@@ -1,0 +1,92 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "webhacking-lab"
+version = "0.1.0"
+description = "Safety-first web security analysis workspace"
+readme = { text = "WebHacking Lab FastAPI backend.", content-type = "text/plain" }
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "MintKangaroo" }]
+dependencies = [
+  "aiosqlite>=0.21.0,<1",
+  "alembic>=1.16.0,<2",
+  "beautifulsoup4>=4.13.0,<5",
+  "defusedxml>=0.7.1,<1",
+  "fastapi>=0.116.0,<1",
+  "httpx>=0.28.0,<1",
+  "lxml>=6.0.0,<7",
+  "pydantic>=2.11.0,<3",
+  "pydantic-settings>=2.10.0,<3",
+  "python-multipart>=0.0.20,<1",
+  "sqlalchemy[asyncio]>=2.0.40,<3",
+  "structlog>=25.4.0,<26",
+  "uvicorn[standard]>=0.35.0,<1",
+]
+
+[project.optional-dependencies]
+postgres = ["asyncpg>=0.30.0,<1"]
+dev = [
+  "mypy>=1.17.0,<2",
+  "pre-commit>=4.2.0,<5",
+  "pytest>=8.4.0,<9",
+  "pytest-asyncio>=1.1.0,<2",
+  "pytest-cov>=6.2.0,<7",
+  "ruff>=0.12.0,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["webhacking_lab"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["webhacking_lab", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "A",
+  "ANN",
+  "ASYNC",
+  "B",
+  "C4",
+  "E",
+  "F",
+  "I",
+  "N",
+  "PERF",
+  "RUF",
+  "S",
+  "SIM",
+  "UP",
+]
+ignore = ["ANN401"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["webhacking_lab"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+exclude = ["tests"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers --strict-config"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["webhacking_lab"]
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+skip_covered = true

@@ -1,0 +1,3 @@
+Alembic migration environment for WebHacking Lab.
+
+Create revisions only after importing all database models into env.py metadata.
