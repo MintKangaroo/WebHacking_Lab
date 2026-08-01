@@ -12,6 +12,9 @@ from starlette.middleware.base import RequestResponseEndpoint
 
 from webhacking_lab import __version__
 from webhacking_lab.api.errors import install_error_handlers
+from webhacking_lab.api.routers.audit import router as audit_router
+from webhacking_lab.api.routers.http_requests import router as http_requests_router
+from webhacking_lab.api.routers.projects import router as projects_router
 from webhacking_lab.api.routers.system import router as system_router
 from webhacking_lab.core.config import Settings, get_settings
 from webhacking_lab.core.logging import (
@@ -93,6 +96,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             reset_correlation_id(token)
 
     application.include_router(system_router, prefix="/api")
+    application.include_router(projects_router, prefix="/api")
+    application.include_router(http_requests_router, prefix="/api")
+    application.include_router(audit_router, prefix="/api")
     install_error_handlers(application)
     return application
 

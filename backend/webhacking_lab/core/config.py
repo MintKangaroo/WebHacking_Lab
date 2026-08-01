@@ -33,7 +33,10 @@ class Settings(BaseSettings):
     global_requests_per_minute: int = Field(default=30, ge=1, le=120)
     default_target_concurrency: int = Field(default=2, ge=1, le=5)
     request_timeout_seconds: float = Field(default=10.0, gt=0, le=30)
+    max_request_bytes: int = Field(default=1024 * 1024, ge=1024, le=5 * 1024 * 1024)
     max_response_bytes: int = Field(default=2 * 1024 * 1024, ge=1024, le=10 * 1024 * 1024)
+    max_har_bytes: int = Field(default=10 * 1024 * 1024, ge=1024, le=50 * 1024 * 1024)
+    max_har_entries: int = Field(default=100, ge=1, le=500)
 
 
 @lru_cache(maxsize=1)

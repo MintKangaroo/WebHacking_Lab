@@ -8,6 +8,7 @@ from sqlalchemy import Connection, pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from webhacking_lab.core.config import get_settings
+from webhacking_lab.database import models as database_models  # noqa: F401
 from webhacking_lab.database.base import Base
 
 config = context.config

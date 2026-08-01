@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from webhacking_lab.core.config import Settings
+from webhacking_lab.database import models as database_models  # noqa: F401
 from webhacking_lab.database.base import Base
 
 
