@@ -19,8 +19,9 @@ promise.
 - Every future execution attempt, including blocked attempts, produces an audit
   event.
 
-Phase 1 implements and exposes these configuration defaults. Network execution
-itself is not present yet.
+Phase 2 implements these configuration defaults together with project scope,
+DNS/IP decisions, cURL/HAR ingestion, structured redaction, and append-only
+audit events. Target HTTP execution itself is not present yet.
 
 ## Dependency advisory note
 

@@ -10,14 +10,18 @@ The application is a React single-page client backed by a typed FastAPI API.
 SQLAlchemy repositories own persistence, domain services own state transitions,
 and routers only translate transport models.
 
-## Current Phase 1 components
+## Current Phase 2 components
 
 | Component | Responsibility |
 | --- | --- |
-| React dashboard | Read-only overview, safety state, navigation shell |
-| FastAPI system router | Health, version, and dashboard contracts |
+| React workspace | Overview, Projects, Scope Registry, HTTP Repeater preview |
+| FastAPI routers | System, project, workspace, scope, HTTP data, audit contracts |
 | Settings | Validated limits and safe-off execution defaults |
-| Database lifecycle | Async engine, sessions, and migration-ready metadata |
+| Domain services | Project state, authorization scope, redacted HTTP revisions |
+| Scope Guard | URL, scheme, authority, DNS/IP, target, port, and path decisions |
+| HTTP import | Non-executing cURL/HAR parsing and multimap normalization |
+| Redaction | Header, Cookie, query, JSON, form, text, and audit masking |
+| Database | Async sessions, repositories, SQLite/PostgreSQL models, Alembic revision |
 | Request context | Correlation IDs and structured lifecycle logging |
 | Containers | Non-root runtime, reduced capabilities, health checks |
 
