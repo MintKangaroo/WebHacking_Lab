@@ -81,6 +81,9 @@ describe("Dashboard", () => {
     render(<App />);
     await screen.findByText("Analyzed requests");
 
+    await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeInTheDocument();
+
     await user.keyboard("{Control>}k{/Control}");
     expect(
       screen.getByRole("dialog", { name: "Command palette" }),
