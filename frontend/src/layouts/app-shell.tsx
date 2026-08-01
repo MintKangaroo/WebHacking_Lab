@@ -16,7 +16,7 @@ import {
   TerminalSquare,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { Outlet } from "react-router-dom";
+import { NavLink, Outlet } from "react-router-dom";
 
 import { CommandMenu } from "../components/command-menu";
 import { Badge } from "../components/ui/badge";
@@ -33,12 +33,13 @@ type NavigationItem = {
   label: string;
   icon: LucideIcon;
   available: boolean;
+  path?: string;
 };
 
 const primaryNavigation: NavigationItem[] = [
-  { label: "Overview", icon: Activity, available: true },
-  { label: "Projects", icon: FolderKanban, available: false },
-  { label: "HTTP Repeater", icon: TerminalSquare, available: false },
+  { label: "Overview", icon: Activity, available: true, path: "/" },
+  { label: "Projects", icon: FolderKanban, available: true, path: "/projects" },
+  { label: "HTTP Repeater", icon: TerminalSquare, available: true, path: "/repeater" },
   { label: "Analyzer", icon: Braces, available: false },
   { label: "Attack Flow", icon: GitBranch, available: false },
 ];
@@ -56,19 +57,13 @@ function NavigationButton({
   item: NavigationItem;
   collapsed: boolean;
 }) {
-  const content = (
-    <button
-      type="button"
-      disabled={!item.available}
-      aria-current={item.available ? "page" : undefined}
-      className={cn(
-        "group flex h-9 w-full items-center gap-3 rounded-md px-3 text-sm transition-colors",
-        item.available
-          ? "bg-cyan-400/[0.09] text-cyan-300"
-          : "cursor-not-allowed text-slate-600",
-        collapsed && "justify-center px-0",
-      )}
-    >
+  const sharedClass = cn(
+    "group flex h-9 w-full items-center gap-3 rounded-md px-3 text-sm transition-colors",
+    !item.available && "cursor-not-allowed text-slate-600",
+    collapsed && "justify-center px-0",
+  );
+  const children = (
+    <>
       <item.icon className="size-4 shrink-0" aria-hidden="true" />
       {!collapsed && <span className="truncate">{item.label}</span>}
       {!collapsed && !item.available && (
@@ -76,6 +71,30 @@ function NavigationButton({
           Soon
         </span>
       )}
+    </>
+  );
+  const content = item.available && item.path ? (
+    <NavLink
+      to={item.path}
+      end={item.path === "/"}
+      className={({ isActive }) =>
+        cn(
+          sharedClass,
+          isActive
+            ? "bg-cyan-400/[0.09] text-cyan-300"
+            : "text-slate-500 hover:bg-white/[0.04] hover:text-slate-200",
+        )
+      }
+    >
+      {children}
+    </NavLink>
+  ) : (
+    <button
+      type="button"
+      disabled={!item.available}
+      className={sharedClass}
+    >
+      {children}
     </button>
   );
 

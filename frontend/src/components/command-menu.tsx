@@ -16,12 +16,12 @@ import { useUiStore } from "../stores/ui-store";
 import { cn } from "../utils/cn";
 
 const commands = [
-  { label: "Open overview", hint: "Dashboard", icon: Activity, available: true },
-  { label: "Create project", hint: "Phase 2", icon: FolderKanban, available: false },
-  { label: "Import HTTP request", hint: "Phase 2", icon: TerminalSquare, available: false },
+  { label: "Open overview", hint: "Dashboard", icon: Activity, available: true, path: "/" },
+  { label: "Create project", hint: "Phase 2", icon: FolderKanban, available: true, path: "/projects" },
+  { label: "Import HTTP request", hint: "Phase 2", icon: TerminalSquare, available: true, path: "/repeater" },
   { label: "Run static analysis", hint: "Phase 3", icon: FileSearch, available: false },
   { label: "Review safety policy", hint: "Docs", icon: ShieldCheck, available: true },
-  { label: "Open settings", hint: "Phase 2", icon: Settings, available: false },
+  { label: "Open settings", hint: "Phase 7", icon: Settings, available: false },
 ];
 
 export function CommandMenu() {
@@ -64,7 +64,7 @@ export function CommandMenu() {
 
   if (!commandOpen) return null;
 
-  const runCommand = (label: string, available: boolean) => {
+  const runCommand = (label: string, available: boolean, path?: string) => {
     if (!available) {
       toast.info("This workflow unlocks in the next implementation phase.");
       return;
@@ -75,7 +75,7 @@ export function CommandMenu() {
       window.open("/api/docs", "_blank", "noopener,noreferrer");
       return;
     }
-    void navigate("/");
+    void navigate(path ?? "/");
   };
 
   return (
@@ -126,7 +126,7 @@ export function CommandMenu() {
               <button
                 key={command.label}
                 type="button"
-                onClick={() => runCommand(command.label, command.available)}
+                onClick={() => runCommand(command.label, command.available, command.path)}
                 className={cn(
                   "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors",
                   "hover:bg-white/[0.05] focus-visible:bg-white/[0.05] focus-visible:outline-none",

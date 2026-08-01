@@ -26,3 +26,36 @@ export async function apiGet<T>(
 
   return (await response.json()) as T;
 }
+
+type JsonMethod = "POST" | "PATCH" | "DELETE";
+
+export async function apiJson<TResponse, TBody = unknown>(
+  path: string,
+  method: JsonMethod,
+  body?: TBody,
+  signal?: AbortSignal,
+): Promise<TResponse> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method,
+    headers: {
+      Accept: "application/json",
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal,
+  });
+
+  if (!response.ok) {
+    let message = `API request failed with status ${response.status}`;
+    try {
+      const payload = (await response.json()) as { message?: string };
+      if (payload.message) message = payload.message;
+    } catch {
+      // Preserve the stable fallback when an upstream response is not JSON.
+    }
+    throw new ApiError(message, response.status);
+  }
+
+  if (response.status === 204) return undefined as TResponse;
+  return (await response.json()) as TResponse;
+}

@@ -11,6 +11,9 @@ import { Button } from "./components/ui/button";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { AppShell } from "./layouts/app-shell";
 import { DashboardPage } from "./pages/dashboard-page";
+import { ProjectPage } from "./pages/project-page";
+import { ProjectsPage } from "./pages/projects-page";
+import { RepeaterPage } from "./pages/repeater-page";
 
 type ErrorBoundaryProps = {
   children: ReactNode;
@@ -86,6 +89,9 @@ export function App() {
                 <Routes>
                   <Route element={<AppShell />}>
                     <Route index element={<DashboardPage />} />
+                    <Route path="projects" element={<ProjectsPage />} />
+                    <Route path="projects/:projectId" element={<ProjectPage />} />
+                    <Route path="repeater" element={<RepeaterPage />} />
                     <Route path="*" element={<Navigate to="/" replace />} />
                   </Route>
                 </Routes>
