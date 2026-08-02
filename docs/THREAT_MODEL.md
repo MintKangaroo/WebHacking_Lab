@@ -36,6 +36,9 @@
 | Analyzer overclaim | Evidence, confidence, validation state, and limitations |
 | Execution bypass | One guarded client injected into all execution-capable services |
 | UI approval confusion | Exact request/impact/count preview and explicit confirmation |
+| Stored credential replay | Omit redacted queries, cookies, authorization, and API keys |
+| Redirect amplification | Five-request ceiling and budget/rate check before every hop |
+| TLS interception | System trust validation, original SNI, no insecure override |
 
 ## Abuse cases
 
@@ -52,6 +55,9 @@
 
 Each case requires a regression test before the related feature is considered
 complete.
+
+Current regression tests use fake external DNS/transports or loopback servers;
+the test suite never calls an external target.
 
 ## Residual risk
 

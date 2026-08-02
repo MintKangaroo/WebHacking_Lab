@@ -10,26 +10,30 @@ The application is a React single-page client backed by a typed FastAPI API.
 SQLAlchemy repositories own persistence, domain services own state transitions,
 and routers only translate transport models.
 
-## Current Phase 2 components
+## Current Phase 3 components
 
 | Component | Responsibility |
 | --- | --- |
-| React workspace | Overview, Projects, Scope Registry, HTTP Repeater preview |
-| FastAPI routers | System, project, workspace, scope, HTTP data, audit contracts |
+| React workspace | Overview, Projects, Scope approval, Repeater, Diff, Analyzer Flow |
+| FastAPI routers | System, project, workspace, scope, HTTP, execution, analysis, audit |
 | Settings | Validated limits and safe-off execution defaults |
-| Domain services | Project state, authorization scope, redacted HTTP revisions |
+| Domain services | Project state, authorization, execution policy, analysis snapshots |
 | Scope Guard | URL, scheme, authority, DNS/IP, target, port, and path decisions |
 | HTTP import | Non-executing cURL/HAR parsing and multimap normalization |
 | Redaction | Header, Cookie, query, JSON, form, text, and audit masking |
-| Database | Async sessions, repositories, SQLite/PostgreSQL models, Alembic revision |
+| Guarded HTTP client | DNS-pinned, TLS-verified, redirect-disabled single-hop sender |
+| Request gateway | Exact preview, safe method policy, redirect checks, limits, budget |
+| Diff engine | Dynamic normalization plus JSON, HTML, header, timing comparisons |
+| Analysis engine | Six passive plugins with evidence, confidence, tests, limitations |
+| Database | Async repositories, SQLite/PostgreSQL models, Alembic revisions |
 | Request context | Correlation IDs and structured lifecycle logging |
 | Containers | Non-root runtime, reduced capabilities, health checks |
 
-## Required execution boundary
+## Execution boundary
 
-Future scanners, the repeater, active plugins, and PoC verification must call
-one guarded HTTP client. They may not instantiate a general-purpose HTTPX
-client in feature code.
+The Repeater already calls the guarded gateway. Future scanners, active
+plugins, and PoC verification must call the same service and may not instantiate
+a general-purpose HTTPX client in feature code.
 
 ```mermaid
 flowchart LR

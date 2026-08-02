@@ -16,12 +16,32 @@ promise.
 - No request is executed automatically from an analyzer result.
 - Sensitive headers and cookies must be redacted at ingestion and again on
   export.
-- Every future execution attempt, including blocked attempts, produces an audit
+- Every execution attempt, including blocked attempts, produces an audit
   event.
 
-Phase 2 implements these configuration defaults together with project scope,
-DNS/IP decisions, cURL/HAR ingestion, structured redaction, and append-only
-audit events. Target HTTP execution itself is not present yet.
+Phase 3 implements controlled target execution for `GET`, `HEAD`, and `OPTIONS`
+only. It sends no body or persisted credentials, binds approval to the exact
+redacted request revision, pins the socket connection to approved DNS answers,
+revalidates every redirect, and stores only redacted responses. One approval
+permits at most five requests including redirects.
+
+External targets remain disabled until both process switches are explicitly
+enabled, an authorization-backed project scope exists, the workspace is
+enabled with a stated purpose, and the exact request preview is confirmed.
+
+## Current execution limits
+
+- State-changing methods and request bodies are blocked.
+- Redacted query fields, cookies, authorization, API keys, and non-allowlisted
+  headers are omitted rather than replayed.
+- TLS verification is always enabled in the controlled client; environment
+  proxies and insecure TLS options are ignored.
+- HTTPS-to-HTTP redirect downgrades are blocked.
+- Scope checks return all approved IPs and the transport connects only to those
+  addresses while retaining the original hostname for TLS SNI.
+- Global and per-target rolling-minute limits, target concurrency, workspace
+  budget, timeout, maximum response bytes, and redirect count are enforced.
+- Passive analyzers can propose bounded tests but cannot call the client.
 
 ## Dependency advisory note
 
