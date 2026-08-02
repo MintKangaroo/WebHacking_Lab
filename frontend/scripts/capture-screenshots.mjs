@@ -53,6 +53,56 @@ const enableResponse = await page.request.post(
 );
 if (!enableResponse.ok()) throw new Error(await enableResponse.text());
 
+const scannerScopeResponse = await page.request.post(
+  `${baseURL}/api/projects/${project.id}/scope`,
+  {
+    data: {
+      scheme: "http",
+      hostname: "backend",
+      port: 8000,
+      path_prefix: "/api",
+      allow_subdomains: false,
+      max_requests_per_minute: 10,
+      max_concurrency: 1,
+      authorization_confirmed: true,
+      authorization_notes: "Screenshot scan is limited to this Compose application's health API.",
+    },
+  },
+);
+if (!scannerScopeResponse.ok()) throw new Error(await scannerScopeResponse.text());
+
+const scanResponse = await page.request.post(`${baseURL}/api/scans`, {
+  data: {
+    project_id: project.id,
+    workspace_id: workspace.id,
+    target: "http://backend:8000/api/health",
+    profile: "passive",
+    crawl_policy: {
+      max_depth: 1,
+      max_pages: 5,
+      max_requests: 5,
+      max_response_bytes: 2000000,
+      requests_per_second: 5,
+      concurrency: 1,
+      include_subdomains: false,
+      respect_logout_routes: true,
+      execute_javascript: false,
+    },
+    authorization_confirmed: true,
+    confirmation_phrase: "START PASSIVE SCAN",
+    expected_use: "Local screenshot of the bounded passive inventory workflow.",
+  },
+});
+if (!scanResponse.ok()) throw new Error(await scanResponse.text());
+const scan = await scanResponse.json();
+for (let attempt = 0; attempt < 40; attempt += 1) {
+  const statusResponse = await page.request.get(`${baseURL}/api/scans/${scan.id}`);
+  if (!statusResponse.ok()) throw new Error(await statusResponse.text());
+  const scanStatus = await statusResponse.json();
+  if (["completed", "cancelled", "failed", "blocked"].includes(scanStatus.status)) break;
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+}
+
 await page.goto(`${baseURL}/`);
 await page.getByRole("heading", { name: "Security analysis, under control." }).waitFor();
 await page.screenshot({ path: resolve(screenshotDirectory, "dashboard.png"), fullPage: true });
@@ -61,6 +111,14 @@ await page.goto(`${baseURL}/projects/${project.id}`);
 await page.getByText("Scope registry").waitFor();
 await page.screenshot({
   path: resolve(screenshotDirectory, "project-scope.png"),
+  fullPage: true,
+});
+
+await page.goto(`${baseURL}/scans`);
+await page.getByLabel("Project").selectOption({ label: projectName });
+await page.getByText("http://backend:8000/api/health").first().waitFor();
+await page.screenshot({
+  path: resolve(screenshotDirectory, "url-scanner.png"),
   fullPage: true,
 });
 

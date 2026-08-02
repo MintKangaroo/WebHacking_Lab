@@ -27,7 +27,7 @@
 | Redirect scope escape | Full validation on every redirect hop |
 | DNS rebinding | Validate all answers and pin the approved address per attempt |
 | Metadata access | Explicit metadata ranges/hostnames deny policy |
-| Excessive traffic | Global rate, target concurrency, job budget, cancellation |
+| Excessive traffic | Global rate, sequential scanner, target concurrency, job budget, cancellation |
 | Destructive mutation | Non-destructive test model and profile policy |
 | Secret leakage | Structured allowlist logging, field redaction, export redaction |
 | ZIP Slip / archive bomb | Canonical containment and extraction budgets |
@@ -37,7 +37,11 @@
 | Execution bypass | One guarded client injected into all execution-capable services |
 | UI approval confusion | Exact request/impact/count preview and explicit confirmation |
 | Stored credential replay | Omit redacted queries, cookies, authorization, and API keys |
-| Redirect amplification | Five-request ceiling and budget/rate check before every hop |
+| Redirect amplification | Per-execution five-request ceiling and scan budget/rate check before every hop |
+| Crawl queue explosion | Depth/page/request/inventory ceilings, deduplication, same-origin policy |
+| Secret replay from discovered URL | Redact stored sample and omit sensitive query values before execution |
+| OpenAPI template execution | Record `{parameter}` paths in inventory but never enqueue them |
+| Oversized scan response | Enforce the smaller job/global byte ceiling while streaming |
 | TLS interception | System trust validation, original SNI, no insecure override |
 
 ## Abuse cases

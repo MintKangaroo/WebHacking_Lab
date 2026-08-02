@@ -34,6 +34,52 @@
 
 Approval token은 요청 revision, 워크스페이스 revision, Scope rule, 정확한 전송 내용을 묶습니다. 상태가 바뀌면 preview를 다시 받아야 합니다.
 
+Preview에는 승인 1회당 최대 요청 수와 요청별 최대 응답 바이트가 포함됩니다. 실제 스트리밍 계층은 서버 전역 상한과 호출 기능의 더 작은 상한 중 작은 값을 사용합니다.
+
+## Passive URL Scanner
+
+Scanner는 별도 네트워크 경로를 만들지 않습니다. 프로젝트 Scope와 워크스페이스 실행 승인을 마친 뒤 다음처럼 명시적인 bounded plan을 제출합니다.
+
+```http
+POST /api/scans
+Content-Type: application/json
+
+{
+  "project_id": "<uuid>",
+  "workspace_id": "<uuid>",
+  "target": "https://authorized.example/review/",
+  "profile": "passive",
+  "crawl_policy": {
+    "max_depth": 2,
+    "max_pages": 20,
+    "max_requests": 30,
+    "max_response_bytes": 2000000,
+    "requests_per_second": 1,
+    "concurrency": 1,
+    "include_subdomains": false,
+    "respect_logout_routes": true,
+    "execute_javascript": false
+  },
+  "authorization_confirmed": true,
+  "confirmation_phrase": "START PASSIVE SCAN",
+  "expected_use": "Authorized passive application inventory"
+}
+```
+
+`202 Accepted` 이후 다음 endpoint를 polling할 수 있습니다.
+
+```text
+GET  /api/scans?project_id=<uuid>
+GET  /api/scans/{scan_id}
+GET  /api/scans/{scan_id}/events
+GET  /api/scans/{scan_id}/endpoints
+GET  /api/scans/{scan_id}/parameters
+GET  /api/scans/{scan_id}/findings
+POST /api/scans/{scan_id}/cancel
+```
+
+현재 서버가 허용하는 프로필은 `passive`뿐입니다. `safe`, `ctf`, `local_lab`은 구현되지 않은 active 기능으로 간주해 `403 execution_blocked`로 종료합니다. `execute_javascript=true`도 허용하지 않습니다. 외부 호스트는 권한 확인이 저장된 Scope 안에 있어야 하며 모든 redirect는 다시 검사됩니다.
+
 ## 분석
 
 ```http

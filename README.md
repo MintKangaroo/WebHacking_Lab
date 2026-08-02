@@ -2,7 +2,7 @@
 
 CTF, 로컬 랩, 명시적으로 허가받은 모의해킹의 HTTP 증거를 한곳에서 분석하는 안전 중심 웹 보안 워크스페이스입니다.
 
-요청·응답 정규화, 민감정보 마스킹, Scope 관리, 제한적 외부 요청, 응답 Diff, 6개 수동 분석기, React Flow 분석 흐름과 감사 로그가 실제 FastAPI 데이터로 동작합니다.
+요청·응답 정규화, 민감정보 마스킹, Scope 관리, 제한적 외부 요청, 응답 Diff, 6개 수동 분석기, React Flow 분석 흐름과 **안전한 Passive URL Scanner**가 실제 FastAPI 데이터로 동작합니다.
 
 > 기본값은 **Analysis Only**입니다. 외부 요청은 서버 설정, 프로젝트 Scope, 권한 확인, 워크스페이스 승인, 요청별 최종 확인을 모두 통과해야 합니다.
 
@@ -15,6 +15,8 @@ CTF, 로컬 랩, 명시적으로 허가받은 모의해킹의 HTTP 증거를 한
 | 수동 분석 결과 | React Flow 분석 흐름 |
 | --- | --- |
 | ![수동 분석 결과](docs/screenshots/analysis-results.png) | ![분석 흐름](docs/screenshots/analysis-flow.png) |
+
+![Scope 기반 Passive URL Scanner](docs/screenshots/url-scanner.png)
 
 ## 빠른 시작
 
@@ -90,11 +92,33 @@ docker compose up --build
 - 리다이렉트마다 scheme, host, port, path, DNS/IP, Scope를 다시 확인
 - HTTPS에서 HTTP로 내려가는 리다이렉트 차단
 - 승인 1회당 최대 5개 요청, 전역/대상별 rate limit과 동시성 제한
-- 워크스페이스 요청 예산, timeout, 최대 응답 크기 적용
+- 워크스페이스 요청 예산, timeout, 요청별 최대 응답 크기 적용
 - TLS 인증서 검증을 항상 사용하고 환경 proxy를 사용하지 않음
 - 성공·실패·정책 차단을 감사 로그에 기록
 
-자동 스캔, 공격 페이로드 실행, 로그인 brute force, 데이터 추출, 파일 쓰기, 명령 실행은 제공하지 않습니다.
+공격 페이로드 실행, 로그인 brute force, 데이터 추출, 파일 쓰기, 명령 실행은 제공하지 않습니다.
+
+### 3. URL을 안전하게 자동 탐색하기
+
+외부 호스트도 사용할 수 있지만, 반드시 위의 **외부 Scope 등록**과 **워크스페이스 실행 승인**을 먼저 완료해야 합니다.
+
+1. 좌측 **URL Scanner**를 엽니다.
+2. 실행 승인이 끝난 프로젝트와 워크스페이스를 선택합니다.
+3. 등록된 Scope 안의 시작 URL을 입력합니다.
+4. Depth, Pages, Requests, 초당 요청 수를 확인합니다. 처음에는 `Depth 2 / Pages 20 / Requests 30 / 1 req/s`를 권장합니다. 실제 속도는 Scope와 전역 분당 한도 중 더 낮은 값으로 자동 조정됩니다.
+5. 승인된 사용 목적을 적고 권한 확인란을 선택합니다.
+6. **Start passive scan**을 누릅니다.
+7. 실시간으로 Endpoint, Parameter, Passive Finding, Policy Event를 확인합니다. 필요하면 **Stop scan**으로 중단합니다.
+
+Scanner가 자동으로 확인하는 범위:
+
+- HTML link, form, iframe, script source
+- 정적 JavaScript의 `fetch`, Axios, XMLHttpRequest, WebSocket URL 문자열
+- `robots.txt`, `sitemap.xml`, OpenAPI/Swagger 문서
+- Query, Form, JSON, Multipart parameter inventory
+- 서버/프레임워크 단서, Security Header, CORS, Cookie, JWT, XSS 반사, SQL 오류 지표
+
+현재 Scanner는 `PASSIVE` 프로필만 실행합니다. GET 기반 문서 수집만 수행하고, JavaScript 실행·로그인 자동화·파라미터 변형·취약점 payload·active test는 만들거나 보내지 않습니다. 발견한 OpenAPI 경로 템플릿은 Inventory에는 기록하지만 실제 URL로 요청하지 않습니다.
 
 ## 현재 기능
 
@@ -110,6 +134,10 @@ docker compose up --build
 - 6개 passive analyzer와 `Observation / Suspicious / Likely / Not Tested` 구분
 - 실행되지 않은 안전 테스트 제안과 분석 한계 표시
 - React Flow 분석 그래프와 노드 Inspector
+- 취소 가능한 Passive Scan Job과 실시간 진행률·요청 예산
+- HTML/JS/robots/sitemap/OpenAPI 기반 Endpoint·Parameter Inventory
+- 기존 6개 분석기를 재사용하는 URL별 Passive Finding
+- 스캔 응답 크기 제한을 스트리밍 다운로드 단계에서 강제
 - SQLite 기본, PostgreSQL 선택 지원, Alembic migration
 - non-root/read-only Docker 런타임과 GitHub Actions
 
@@ -123,11 +151,13 @@ flowchart TD
     API --> SG[Scope Guard]
     API --> HC[DNS-pinned HTTP Client]
     API --> AN[Passive Analysis Engine]
+    API --> SC[Passive URL Scanner]
     API --> DF[Diff Engine]
     API --> AU[Audit Log]
     API --> DB[(SQLite / PostgreSQL)]
     SG --> RL[Rate + Concurrency + Budget]
     RL --> HC
+    SC --> RL
     HC --> RG[Redirect Revalidation]
     RG --> RD[Response Limit + Redaction]
     RD --> DB
@@ -166,6 +196,14 @@ POST   /api/diff
 POST   /api/analysis
 GET    /api/analysis/{analysis_id}
 GET    /api/analysis/{analysis_id}/flow
+POST   /api/scans
+GET    /api/scans
+GET    /api/scans/{scan_id}
+POST   /api/scans/{scan_id}/cancel
+GET    /api/scans/{scan_id}/endpoints
+GET    /api/scans/{scan_id}/parameters
+GET    /api/scans/{scan_id}/findings
+GET    /api/scans/{scan_id}/events
 GET    /api/audit-events
 ```
 
@@ -205,7 +243,7 @@ npx playwright install chromium
 PLAYWRIGHT_BASE_URL=http://127.0.0.1:8080 npm run e2e
 ```
 
-현재 Backend 67개, Frontend 8개 unit/integration, Playwright 핵심 E2E를 포함합니다. 자동 테스트는 실제 외부 서비스에 요청하지 않습니다.
+현재 Backend 81개, Frontend 9개 unit/integration, Playwright 핵심 E2E를 포함합니다. 자동 테스트는 실제 외부 서비스에 요청하지 않습니다.
 
 ## 환경 변수
 
@@ -218,7 +256,7 @@ PLAYWRIGHT_BASE_URL=http://127.0.0.1:8080 npm run e2e
 | `WEBHACKING_DEFAULT_TARGET_CONCURRENCY` | `2` | 기본 동시성 상한 |
 | `WEBHACKING_REQUEST_TIMEOUT_SECONDS` | `10` | 요청 timeout |
 | `WEBHACKING_MAX_REQUEST_BYTES` | `1048576` | 저장 요청 body 상한 |
-| `WEBHACKING_MAX_RESPONSE_BYTES` | `2097152` | 다운로드 후 디코딩 응답 상한 |
+| `WEBHACKING_MAX_RESPONSE_BYTES` | `2097152` | 스트리밍 다운로드 응답 상한 |
 | `WEBHACKING_MAX_HAR_BYTES` | `10485760` | HAR 입력 상한 |
 
 전체 예시는 [.env.example](.env.example)에 있습니다.
@@ -231,9 +269,9 @@ PLAYWRIGHT_BASE_URL=http://127.0.0.1:8080 npm run e2e
 
 ## 현재 제한과 로드맵
 
-현재 구현 범위는 Foundation, HTTP Workspace, 제한적 외부 Repeater, Diff, Passive Analysis, React Flow 기초입니다.
+현재 구현 범위는 Foundation, HTTP Workspace, 제한적 외부 Repeater, Diff, Passive Analysis, React Flow 기초, Phase 8 Passive URL Scanner입니다.
 
-- 아직 URL crawler/active scanner job은 없습니다.
+- URL crawler는 Passive 프로필만 지원하며 SAFE/CTF/LOCAL_LAB active test plan과 개별 승인은 후속 Phase입니다.
 - Source ZIP 업로드와 AST taint analysis는 아직 없습니다.
 - CTF Workspace, Encoding Workbench, 5개 격리 Lab, Finding/Report는 후속 Phase입니다.
 - 저장된 인증정보는 의도적으로 실행에 재사용하지 않아 로그인 세션 크롤링은 지원하지 않습니다.

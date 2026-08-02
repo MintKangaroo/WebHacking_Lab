@@ -10,12 +10,12 @@ The application is a React single-page client backed by a typed FastAPI API.
 SQLAlchemy repositories own persistence, domain services own state transitions,
 and routers only translate transport models.
 
-## Current Phase 3 components
+## Current Phase 8 components
 
 | Component | Responsibility |
 | --- | --- |
-| React workspace | Overview, Projects, Scope approval, Repeater, Diff, Analyzer Flow |
-| FastAPI routers | System, project, workspace, scope, HTTP, execution, analysis, audit |
+| React workspace | Overview, Projects, Scope approval, Repeater, Diff, Analyzer Flow, URL Scanner |
+| FastAPI routers | System, project, workspace, scope, HTTP, execution, analysis, scan, audit |
 | Settings | Validated limits and safe-off execution defaults |
 | Domain services | Project state, authorization, execution policy, analysis snapshots |
 | Scope Guard | URL, scheme, authority, DNS/IP, target, port, and path decisions |
@@ -25,14 +25,15 @@ and routers only translate transport models.
 | Request gateway | Exact preview, safe method policy, redirect checks, limits, budget |
 | Diff engine | Dynamic normalization plus JSON, HTML, header, timing comparisons |
 | Analysis engine | Six passive plugins with evidence, confidence, tests, limitations |
+| Scanner engine | Cancellable bounded crawl, content discovery, inventories, fingerprints |
 | Database | Async repositories, SQLite/PostgreSQL models, Alembic revisions |
 | Request context | Correlation IDs and structured lifecycle logging |
 | Containers | Non-root runtime, reduced capabilities, health checks |
 
 ## Execution boundary
 
-The Repeater already calls the guarded gateway. Future scanners, active
-plugins, and PoC verification must call the same service and may not instantiate
+The Repeater and passive URL Scanner call the guarded gateway. Future active
+plugins and PoC verification must call the same service and may not instantiate
 a general-purpose HTTPX client in feature code.
 
 ```mermaid
@@ -62,7 +63,7 @@ hostname allowlisting.
 
 ## URL scanner extension
 
-Phase 8 adds a bounded job engine and inventory pipeline:
+Phase 8 provides a bounded job engine and inventory pipeline:
 
 ```mermaid
 flowchart LR
@@ -72,16 +73,25 @@ flowchart LR
     C --> P[Parameter inventory]
     C --> F[Fingerprinting]
     E --> PA[Passive analysis]
-    P --> TP[Test plans]
-    TP --> W[Waiting for approval]
-    W --> G[Guarded execution]
+    P --> PA[Passive analysis]
+    PA --> DB[(Inventory + findings + events)]
 ```
 
-Profiles are capabilities, not cosmetic labels. `PASSIVE` does not create
-mutations. `SAFE` permits only bounded non-destructive observations. `CTF`
-requires explicit challenge confirmation. `LOCAL_LAB` additionally requires a
-target identity issued by the isolated lab registry. Cancellation and request
-budget checks occur before every queued request.
+Profiles are capabilities, not cosmetic labels. The current engine accepts only
+`PASSIVE`: sequential GET retrieval, no request body, no stored credentials, no
+JavaScript execution, and no mutation. `SAFE`, `CTF`, and `LOCAL_LAB` are rejected
+until their separate test-planning and approval policy is implemented.
+Cancellation and request-budget checks occur before every queued request.
+Scanner pacing is also capped by both the matched Scope rule's per-minute limit
+and the process-wide per-minute limit, regardless of a faster user-selected
+profile value.
+
+The queue begins with the registered URL and same-origin well-known discovery
+files. HTML, static JavaScript literals, robots, sitemap, and OpenAPI documents
+produce normalized inventory records. Logout-like URLs and OpenAPI path
+templates are recorded but never fetched. The job-specific response ceiling is
+passed into the shared streaming transport, so a smaller scan limit cannot be
+weakened by the process-wide default.
 
 ## Source analysis extension
 
