@@ -122,6 +122,8 @@ def _approval_token(
     workspace: Workspace,
     exact_request: str,
     decision: ScopeDecision,
+    maximum_request_count: int,
+    max_response_bytes: int,
 ) -> str:
     material = "\n".join(
         (
@@ -129,6 +131,8 @@ def _approval_token(
             str(request.version),
             str(workspace.version),
             str(decision.matched_rule_id),
+            str(maximum_request_count),
+            str(max_response_bytes),
             exact_request,
         )
     )
@@ -220,6 +224,8 @@ class RequestExecutionService:
         request: HttpRequest,
         workspace: Workspace,
         rules: list[ScopeRule],
+        maximum_request_count: int,
+        max_response_bytes: int,
     ) -> tuple[RequestExecutionPreview, NormalizedRequest]:
         self._check_server_policy()
         if not workspace.network_execution_enabled:
@@ -237,10 +243,21 @@ class RequestExecutionService:
             exact_request=exact_request,
             expected_impact=(
                 "Read-only retrieval with no request body or stored credentials; redirects are "
-                "followed only after the same full safety check, up to five total requests."
+                "followed only after the same full safety check, up to "
+                f"{maximum_request_count} total request(s), with at most "
+                f"{max_response_bytes} response bytes per request."
             ),
+            maximum_request_count=maximum_request_count,
+            max_response_bytes=max_response_bytes,
             scope=decision,
-            approval_token=_approval_token(request, workspace, exact_request, decision),
+            approval_token=_approval_token(
+                request,
+                workspace,
+                exact_request,
+                decision,
+                maximum_request_count,
+                max_response_bytes,
+            ),
             warnings=warnings,
         )
         return preview, outbound
@@ -249,12 +266,29 @@ class RequestExecutionService:
         self,
         request_id: UUID,
         correlation_id: str | None,
+        *,
+        maximum_request_count: int = MAX_REQUESTS_PER_APPROVAL,
+        max_response_bytes: int | None = None,
     ) -> RequestExecutionPreview:
         """Return and audit the exact initial request plus maximum redirect budget."""
 
+        if not 1 <= maximum_request_count <= MAX_REQUESTS_PER_APPROVAL:
+            raise ExecutionPolicyError("Approval request count must be between one and five")
+        requested_limit = (
+            self._settings.max_response_bytes if max_response_bytes is None else max_response_bytes
+        )
+        if requested_limit < 1:
+            raise ExecutionPolicyError("Response size limit must be positive")
+        response_limit = min(self._settings.max_response_bytes, requested_limit)
         request, workspace, rules = await self._load(request_id)
         try:
-            preview, _ = await self._build_preview(request, workspace, rules)
+            preview, _ = await self._build_preview(
+                request,
+                workspace,
+                rules,
+                maximum_request_count,
+                response_limit,
+            )
         except ExecutionPolicyError as error:
             await self._record_blocked(request, workspace, correlation_id, str(error))
             raise
@@ -274,12 +308,29 @@ class RequestExecutionService:
         request_id: UUID,
         approval: RequestExecutionApproval,
         correlation_id: str | None,
+        *,
+        maximum_request_count: int = MAX_REQUESTS_PER_APPROVAL,
+        max_response_bytes: int | None = None,
     ) -> RequestExecutionResult:
         """Execute the approved request chain, rechecking every redirect before use."""
 
+        if not 1 <= maximum_request_count <= MAX_REQUESTS_PER_APPROVAL:
+            raise ExecutionPolicyError("Approval request count must be between one and five")
+        requested_limit = (
+            self._settings.max_response_bytes if max_response_bytes is None else max_response_bytes
+        )
+        if requested_limit < 1:
+            raise ExecutionPolicyError("Response size limit must be positive")
+        response_limit = min(self._settings.max_response_bytes, requested_limit)
         request, workspace, rules = await self._load(request_id)
         try:
-            preview, outbound = await self._build_preview(request, workspace, rules)
+            preview, outbound = await self._build_preview(
+                request,
+                workspace,
+                rules,
+                maximum_request_count,
+                response_limit,
+            )
             if request.version != approval.request_version:
                 raise ConflictError("Request was modified after the approval preview")
             if preview.approval_token != approval.approval_token:
@@ -295,7 +346,11 @@ class RequestExecutionService:
             project_id=workspace.project_id,
             workspace_id=workspace.id,
             correlation_id=correlation_id,
-            details={"method": outbound.method, "hostname": outbound.host, "maximum_requests": 5},
+            details={
+                "method": outbound.method,
+                "hostname": outbound.host,
+                "maximum_requests": maximum_request_count,
+            },
         )
         await self._session.commit()
 
@@ -305,7 +360,7 @@ class RequestExecutionService:
         final_result: TransportResult | None = None
         requests_sent = 0
         try:
-            for request_number in range(MAX_REQUESTS_PER_APPROVAL):
+            for request_number in range(maximum_request_count):
                 decision, rule = await self._scope_decision(current_url, workspace, rules)
                 parsed_target = urlsplit(current_url)
                 target_key = f"{parsed_target.scheme}://{parsed_target.netloc}"
@@ -324,6 +379,7 @@ class RequestExecutionService:
                         headers=[(item.name, item.value) for item in outbound.headers],
                         resolved_ips=decision.resolved_ips,
                         expected_hostname=decision.hostname or "",
+                        max_response_bytes=response_limit,
                     )
                 requests_sent += 1
                 location = next(
@@ -343,7 +399,7 @@ class RequestExecutionService:
                         location=next_decision.normalized_url,
                     )
                 )
-                if request_number + 1 == MAX_REQUESTS_PER_APPROVAL:
+                if request_number + 1 == maximum_request_count:
                     break
                 current_url = next_url
                 if final_result.status_code == 303:
@@ -361,7 +417,7 @@ class RequestExecutionService:
             body=_decode_body(final_result),
             elapsed_ms=final_result.elapsed_ms,
             redirect_history=redirect_history,
-            max_body_bytes=self._settings.max_response_bytes,
+            max_body_bytes=response_limit,
         )
         response_model = await self._http.add_response(
             HttpResponse(
@@ -400,4 +456,5 @@ class RequestExecutionService:
             ),
             requests_used=workspace.requests_used,
             request_budget=workspace.request_budget,
+            request_count=requests_sent,
         )

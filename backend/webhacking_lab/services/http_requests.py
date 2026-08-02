@@ -131,6 +131,8 @@ class HttpRequestService:
         self,
         data: HttpRequestCreate,
         correlation_id: str | None,
+        *,
+        source: str = "manual",
     ) -> HttpRequestRead:
         normalized = normalize_request(
             method=data.method,
@@ -144,7 +146,7 @@ class HttpRequestService:
         request = await self._persist_exchange(
             data.workspace_id,
             ImportedExchange(request=normalized),
-            source="manual",
+            source=source,
             correlation_id=correlation_id,
             event_type=AuditEventType.REQUEST_CREATED,
         )

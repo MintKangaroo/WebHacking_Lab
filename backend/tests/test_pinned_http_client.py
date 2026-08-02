@@ -58,13 +58,14 @@ async def test_dns_pinned_sender_stops_at_response_limit() -> None:
         with pytest.raises(ResponseLimitError):
             await HttpxPinnedSender(
                 timeout_seconds=1,
-                max_response_bytes=32,
+                max_response_bytes=1024,
             ).send(
                 method="GET",
                 url=f"http://localhost:{port}/large",
                 headers=[],
                 resolved_ips=["127.0.0.1"],
                 expected_hostname="localhost",
+                max_response_bytes=32,
             )
     finally:
         server.close()

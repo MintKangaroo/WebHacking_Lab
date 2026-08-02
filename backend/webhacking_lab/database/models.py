@@ -15,11 +15,18 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from webhacking_lab.database.base import Base, TimestampedUuidMixin
-from webhacking_lab.domain.enums import AnalysisMode, AuditEventType, WorkspaceMode
+from webhacking_lab.domain.enums import (
+    AnalysisMode,
+    AuditEventType,
+    ScannerProfile,
+    ScanStatus,
+    WorkspaceMode,
+)
 
 
 class VersionedEntityMixin:
@@ -191,6 +198,165 @@ class AnalysisRun(TimestampedUuidMixin, VersionedEntityMixin, Base):
     status: Mapped[str] = mapped_column(String(32), default="completed")
     results_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     flow_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class ScanJob(TimestampedUuidMixin, VersionedEntityMixin, Base):
+    """Bounded, cancellable passive URL scan."""
+
+    __tablename__ = "scan_jobs"
+
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    workspace_id: Mapped[UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        index=True,
+    )
+    profile: Mapped[ScannerProfile] = mapped_column(
+        Enum(ScannerProfile, native_enum=False, length=24),
+    )
+    target: Mapped[str] = mapped_column(Text)
+    status: Mapped[ScanStatus] = mapped_column(
+        Enum(ScanStatus, native_enum=False, length=32),
+        index=True,
+    )
+    current_stage: Mapped[str] = mapped_column(String(80), default="Queued")
+    progress: Mapped[float] = mapped_column(Float, default=0)
+    request_budget: Mapped[int] = mapped_column(Integer)
+    requests_used: Mapped[int] = mapped_column(Integer, default=0)
+    findings_count: Mapped[int] = mapped_column(Integer, default=0)
+    cancellation_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    crawl_policy_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    fingerprint_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    endpoints: Mapped[list["ScanEndpoint"]] = relationship(
+        back_populates="scan",
+        cascade="all, delete-orphan",
+    )
+    parameters: Mapped[list["ScanParameter"]] = relationship(
+        back_populates="scan",
+        cascade="all, delete-orphan",
+    )
+    findings: Mapped[list["ScanFinding"]] = relationship(
+        back_populates="scan",
+        cascade="all, delete-orphan",
+    )
+    events: Mapped[list["ScanEvent"]] = relationship(
+        back_populates="scan",
+        cascade="all, delete-orphan",
+    )
+
+
+class ScanEndpoint(TimestampedUuidMixin, Base):
+    """Endpoint discovered from a fetched or parsed passive artifact."""
+
+    __tablename__ = "scan_endpoints"
+    __table_args__ = (
+        UniqueConstraint("scan_id", "method", "url", name="uq_scan_endpoint_identity"),
+    )
+
+    scan_id: Mapped[UUID] = mapped_column(
+        ForeignKey("scan_jobs.id", ondelete="CASCADE"),
+        index=True,
+    )
+    url: Mapped[str] = mapped_column(Text)
+    method: Mapped[str] = mapped_column(String(16), default="GET")
+    source: Mapped[str] = mapped_column(String(40))
+    depth: Mapped[int] = mapped_column(Integer, default=0)
+    fetched: Mapped[bool] = mapped_column(Boolean, default=False)
+    status_code: Mapped[int | None] = mapped_column(Integer)
+    content_type: Mapped[str | None] = mapped_column(String(160))
+    title: Mapped[str | None] = mapped_column(String(300))
+    http_request_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("http_requests.id", ondelete="SET NULL"),
+        index=True,
+    )
+    http_response_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("http_responses.id", ondelete="SET NULL"),
+        index=True,
+    )
+
+    scan: Mapped[ScanJob] = relationship(back_populates="endpoints")
+
+
+class ScanParameter(TimestampedUuidMixin, Base):
+    """Deduplicated input observed for one scanner job."""
+
+    __tablename__ = "scan_parameters"
+    __table_args__ = (
+        UniqueConstraint(
+            "scan_id",
+            "endpoint_url",
+            "name",
+            "location",
+            name="uq_scan_parameter_identity",
+        ),
+    )
+
+    scan_id: Mapped[UUID] = mapped_column(
+        ForeignKey("scan_jobs.id", ondelete="CASCADE"),
+        index=True,
+    )
+    endpoint_url: Mapped[str] = mapped_column(Text)
+    name: Mapped[str] = mapped_column(String(300))
+    location: Mapped[str] = mapped_column(String(32))
+    sample_value: Mapped[str] = mapped_column(Text, default="")
+    source: Mapped[str] = mapped_column(String(40))
+
+    scan: Mapped[ScanJob] = relationship(back_populates="parameters")
+
+
+class ScanFinding(TimestampedUuidMixin, Base):
+    """Passive analyzer candidate associated with a runtime endpoint."""
+
+    __tablename__ = "scan_findings"
+    __table_args__ = (
+        UniqueConstraint(
+            "scan_id",
+            "endpoint_url",
+            "analyzer",
+            name="uq_scan_finding_identity",
+        ),
+    )
+
+    scan_id: Mapped[UUID] = mapped_column(
+        ForeignKey("scan_jobs.id", ondelete="CASCADE"),
+        index=True,
+    )
+    endpoint_url: Mapped[str] = mapped_column(Text)
+    analyzer: Mapped[str] = mapped_column(String(100))
+    category: Mapped[str] = mapped_column(String(80))
+    title: Mapped[str] = mapped_column(String(240))
+    summary: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32))
+    severity: Mapped[str] = mapped_column(String(24))
+    confidence: Mapped[float] = mapped_column(Float)
+    evidence_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    remediation_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    limitations_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+    scan: Mapped[ScanJob] = relationship(back_populates="findings")
+
+
+class ScanEvent(TimestampedUuidMixin, Base):
+    """Append-only user-facing scan progress event."""
+
+    __tablename__ = "scan_events"
+
+    scan_id: Mapped[UUID] = mapped_column(
+        ForeignKey("scan_jobs.id", ondelete="CASCADE"),
+        index=True,
+    )
+    stage: Mapped[str] = mapped_column(String(80))
+    level: Mapped[str] = mapped_column(String(16), default="info")
+    message: Mapped[str] = mapped_column(Text)
+    details_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    scan: Mapped[ScanJob] = relationship(back_populates="events")
 
 
 class AuditEvent(TimestampedUuidMixin, Base):

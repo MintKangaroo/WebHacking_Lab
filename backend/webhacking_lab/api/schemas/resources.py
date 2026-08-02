@@ -240,6 +240,7 @@ class RequestExecutionPreview(ApiModel):
     method: Literal["GET", "HEAD", "OPTIONS"]
     exact_request: str
     maximum_request_count: int = Field(default=5, ge=1, le=5)
+    max_response_bytes: int = Field(ge=1)
     expected_impact: str
     data_changes: Literal[False] = False
     tls_verification: Literal[True] = True
@@ -263,6 +264,7 @@ class RequestExecutionResult(ApiModel):
     response: HttpResponseRead
     requests_used: int
     request_budget: int
+    request_count: int = Field(ge=1, le=5)
 
 
 class DiffCreate(ApiModel):

@@ -36,6 +36,7 @@ class SingleHopSender:
         headers: list[tuple[str, str]],
         resolved_ips: list[str],
         expected_hostname: str,
+        max_response_bytes: int | None = None,
     ) -> TransportResult:
         """Send one request without following redirects."""
 
@@ -124,11 +125,16 @@ class HttpxPinnedSender(SingleHopSender):
         headers: list[tuple[str, str]],
         resolved_ips: list[str],
         expected_hostname: str,
+        max_response_bytes: int | None = None,
     ) -> TransportResult:
         """Send one redirect-disabled exchange and stop at the byte ceiling."""
 
         transport = PinnedAsyncTransport(expected_hostname, resolved_ips)
         timeout = httpx.Timeout(self._timeout_seconds)
+        requested_limit = (
+            self._max_response_bytes if max_response_bytes is None else max_response_bytes
+        )
+        response_limit = min(self._max_response_bytes, requested_limit)
         started = perf_counter()
         try:
             async with (
@@ -143,7 +149,7 @@ class HttpxPinnedSender(SingleHopSender):
                 body = bytearray()
                 async for chunk in response.aiter_bytes():
                     body.extend(chunk)
-                    if len(body) > self._max_response_bytes:
+                    if len(body) > response_limit:
                         raise ResponseLimitError("Response exceeded the configured size limit")
                 return TransportResult(
                     status_code=response.status_code,

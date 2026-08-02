@@ -20,6 +20,34 @@ class AnalysisMode(StrEnum):
     HYBRID = "hybrid"
 
 
+class ScannerProfile(StrEnum):
+    """Capability profile selected for a URL scan."""
+
+    PASSIVE = "passive"
+    SAFE = "safe"
+    CTF = "ctf"
+    LOCAL_LAB = "local_lab"
+
+
+class ScanStatus(StrEnum):
+    """Persisted lifecycle for cancellable scanner jobs."""
+
+    QUEUED = "queued"
+    VALIDATING_SCOPE = "validating_scope"
+    CRAWLING = "crawling"
+    FINGERPRINTING = "fingerprinting"
+    PASSIVE_ANALYSIS = "passive_analysis"
+    PLANNING_ACTIVE_TESTS = "planning_active_tests"
+    WAITING_FOR_APPROVAL = "waiting_for_approval"
+    ACTIVE_TESTING = "active_testing"
+    VERIFYING = "verifying"
+    REPORTING = "reporting"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+    FAILED = "failed"
+    BLOCKED = "blocked"
+
+
 class AuditEventType(StrEnum):
     """Auditable state changes."""
 
@@ -41,6 +69,14 @@ class AuditEventType(StrEnum):
     REQUEST_EXECUTION_BLOCKED = "request.execution_blocked"
     ANALYSIS_STARTED = "analysis.started"
     ANALYSIS_COMPLETED = "analysis.completed"
+    SCAN_CREATED = "scan.created"
+    SCAN_STARTED = "scan.started"
+    SCAN_STAGE_CHANGED = "scan.stage_changed"
+    SCAN_CANCELLATION_REQUESTED = "scan.cancellation_requested"
+    SCAN_COMPLETED = "scan.completed"
+    SCAN_CANCELLED = "scan.cancelled"
+    SCAN_BLOCKED = "scan.blocked"
+    SCAN_FAILED = "scan.failed"
 
 
 class VulnerabilityCategory(StrEnum):

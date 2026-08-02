@@ -16,6 +16,7 @@ from webhacking_lab.api.routers.analysis import router as analysis_router
 from webhacking_lab.api.routers.audit import router as audit_router
 from webhacking_lab.api.routers.http_requests import router as http_requests_router
 from webhacking_lab.api.routers.projects import router as projects_router
+from webhacking_lab.api.routers.scans import router as scans_router
 from webhacking_lab.api.routers.system import router as system_router
 from webhacking_lab.core.config import Settings, get_settings
 from webhacking_lab.core.logging import (
@@ -27,6 +28,7 @@ from webhacking_lab.core.rate_limit import RequestGate
 from webhacking_lab.database.session import Database, ensure_sqlite_directory
 from webhacking_lab.http_client.client import HttpxPinnedSender
 from webhacking_lab.http_client.scope_guard import SystemDnsResolver
+from webhacking_lab.scanner.jobs import ScanTaskRegistry
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -51,6 +53,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             yield
         finally:
+            await application.state.scan_tasks.shutdown()
             await database.close()
             logger.info("application_stopped")
 
@@ -73,6 +76,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         max_response_bytes=active_settings.max_response_bytes,
     )
     application.state.dns_resolver = SystemDnsResolver()
+    application.state.scan_tasks = ScanTaskRegistry()
     application.add_middleware(
         CORSMiddleware,
         allow_origins=active_settings.cors_origins,
@@ -110,6 +114,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(http_requests_router, prefix="/api")
     application.include_router(audit_router, prefix="/api")
     application.include_router(analysis_router, prefix="/api")
+    application.include_router(scans_router, prefix="/api")
     install_error_handlers(application)
     return application
 

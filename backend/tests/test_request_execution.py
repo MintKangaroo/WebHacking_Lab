@@ -36,6 +36,7 @@ class FakeSender(SingleHopSender):
         headers: list[tuple[str, str]],
         resolved_ips: list[str],
         expected_hostname: str,
+        max_response_bytes: int | None = None,
     ) -> TransportResult:
         self.calls.append(
             {
@@ -44,6 +45,7 @@ class FakeSender(SingleHopSender):
                 "headers": headers,
                 "resolved_ips": resolved_ips,
                 "expected_hostname": expected_hostname,
+                "max_response_bytes": max_response_bytes,
             }
         )
         return self.responses.pop(0)
@@ -145,6 +147,7 @@ def test_external_request_requires_preview_and_follows_only_rescoped_redirects(
     assert preview["scope"]["allowed"] is True
     assert preview["scope"]["resolved_ips"] == ["93.184.216.34"]
     assert preview["maximum_request_count"] == 5
+    assert preview["max_response_bytes"] == 2 * 1024 * 1024
     assert "not-stored" not in preview_response.text
     assert "Authorization" not in preview["exact_request"]
     assert "token=" not in preview["target_url"]
