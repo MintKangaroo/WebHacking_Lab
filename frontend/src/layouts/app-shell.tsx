@@ -10,6 +10,7 @@ import {
   GitBranch,
   Menu,
   PanelLeftClose,
+  Radar,
   Search,
   Settings,
   ShieldCheck,
@@ -40,6 +41,7 @@ const primaryNavigation: NavigationItem[] = [
   { label: "Overview", icon: Activity, available: true, path: "/" },
   { label: "Projects", icon: FolderKanban, available: true, path: "/projects" },
   { label: "HTTP Repeater", icon: TerminalSquare, available: true, path: "/repeater" },
+  { label: "URL Scanner", icon: Radar, available: true, path: "/scans" },
   { label: "Analyzer", icon: Braces, available: true, path: "/analyzer" },
   { label: "Attack Flow", icon: GitBranch, available: false },
 ];

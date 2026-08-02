@@ -140,6 +140,7 @@ export type RequestExecutionPreview = {
   method: "GET" | "HEAD" | "OPTIONS";
   exact_request: string;
   maximum_request_count: number;
+  max_response_bytes: number;
   expected_impact: string;
   data_changes: false;
   tls_verification: true;
@@ -153,6 +154,121 @@ export type RequestExecutionResult = {
   response: HttpResponseRecord;
   requests_used: number;
   request_budget: number;
+  request_count: number;
+};
+
+export type ScannerProfile = "passive" | "safe" | "ctf" | "local_lab";
+
+export type ScanStatus =
+  | "queued"
+  | "validating_scope"
+  | "crawling"
+  | "fingerprinting"
+  | "passive_analysis"
+  | "planning_active_tests"
+  | "waiting_for_approval"
+  | "active_testing"
+  | "verifying"
+  | "reporting"
+  | "completed"
+  | "cancelled"
+  | "failed"
+  | "blocked";
+
+export type CrawlPolicy = {
+  max_depth: number;
+  max_pages: number;
+  max_requests: number;
+  max_response_bytes: number;
+  requests_per_second: number;
+  concurrency: number;
+  include_subdomains: boolean;
+  respect_logout_routes: boolean;
+  execute_javascript: boolean;
+};
+
+export type TechnologyFingerprint = {
+  name: string;
+  evidence: string;
+  confidence: number;
+};
+
+export type ScanJob = {
+  id: string;
+  project_id: string;
+  workspace_id: string;
+  profile: ScannerProfile;
+  target: string;
+  status: ScanStatus;
+  current_stage: string;
+  progress: number;
+  request_budget: number;
+  requests_used: number;
+  endpoints_count: number;
+  parameters_count: number;
+  findings_count: number;
+  cancellation_requested: boolean;
+  crawl_policy: CrawlPolicy;
+  fingerprints: TechnologyFingerprint[];
+  error_message: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ScanEndpoint = {
+  id: string;
+  scan_id: string;
+  url: string;
+  method: string;
+  source: string;
+  depth: number;
+  fetched: boolean;
+  status_code: number | null;
+  content_type: string | null;
+  title: string | null;
+  http_request_id: string | null;
+  http_response_id: string | null;
+  created_at: string;
+};
+
+export type ScanParameter = {
+  id: string;
+  scan_id: string;
+  endpoint_url: string;
+  name: string;
+  location: string;
+  sample_value: string;
+  source: string;
+  created_at: string;
+};
+
+export type ScanFinding = {
+  id: string;
+  scan_id: string;
+  endpoint_url: string;
+  analyzer: string;
+  category: string;
+  title: string;
+  summary: string;
+  status: string;
+  severity: "info" | "low" | "medium" | "high" | "critical";
+  confidence: number;
+  evidence: Array<Record<string, unknown>>;
+  remediation: string[];
+  limitations: string[];
+  created_at: string;
+};
+
+export type ScanEvent = {
+  id: string;
+  scan_id: string;
+  stage: string;
+  level: string;
+  message: string;
+  details: Record<string, unknown>;
+  created_at: string;
 };
 
 export type VerificationStatus =

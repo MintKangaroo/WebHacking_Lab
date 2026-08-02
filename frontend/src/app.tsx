@@ -14,6 +14,7 @@ import { DashboardPage } from "./pages/dashboard-page";
 import { ProjectPage } from "./pages/project-page";
 import { ProjectsPage } from "./pages/projects-page";
 import { RepeaterPage } from "./pages/repeater-page";
+import { ScansPage } from "./pages/scans-page";
 
 type ErrorBoundaryProps = {
   children: ReactNode;
@@ -93,6 +94,7 @@ export function App() {
                     <Route path="projects/:projectId" element={<ProjectPage />} />
                     <Route path="repeater" element={<RepeaterPage />} />
                     <Route path="analyzer" element={<RepeaterPage />} />
+                    <Route path="scans" element={<ScansPage />} />
                     <Route path="*" element={<Navigate to="/" replace />} />
                   </Route>
                 </Routes>

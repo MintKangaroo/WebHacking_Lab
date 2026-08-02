@@ -201,6 +201,7 @@ describe("Phase 3 controlled workflows", () => {
           method: "GET",
           exact_request: "GET /allowed?q=demo HTTP/1.1\r\nHost: authorized.example",
           maximum_request_count: 5,
+          max_response_bytes: 2_097_152,
           expected_impact: "Read-only retrieval without credentials.",
           data_changes: false,
           tls_verification: true,
