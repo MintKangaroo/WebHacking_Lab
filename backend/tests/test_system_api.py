@@ -2,6 +2,9 @@
 
 from fastapi.testclient import TestClient
 
+from webhacking_lab.api.routers.system import safety_status
+from webhacking_lab.core.config import Settings
+
 
 def test_health_reports_safe_defaults(client: TestClient) -> None:
     response = client.get("/api/health", headers={"X-Correlation-ID": "test-correlation"})
@@ -25,6 +28,18 @@ def test_version_contract(client: TestClient) -> None:
         "version": "0.1.0",
         "api_version": "v1",
     }
+
+
+def test_safety_status_reports_explicit_controlled_execution() -> None:
+    status = safety_status(
+        Settings(
+            environment="test",
+            analysis_only=False,
+            network_execution_enabled=True,
+        )
+    )
+    assert status.mode == "Controlled Execution"
+    assert status.network_execution_enabled is True
 
 
 def test_dashboard_is_api_backed_demo_data(client: TestClient) -> None:

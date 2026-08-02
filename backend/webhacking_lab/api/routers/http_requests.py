@@ -6,7 +6,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from webhacking_lab.api.dependencies import get_db_session, get_request_settings
+from webhacking_lab.api.dependencies import (
+    get_db_session,
+    get_dns_resolver,
+    get_http_sender,
+    get_request_gate,
+    get_request_settings,
+)
 from webhacking_lab.api.schemas.resources import (
     CurlImportRequest,
     HarImportRequest,
@@ -14,13 +20,23 @@ from webhacking_lab.api.schemas.resources import (
     HttpRequestRead,
     HttpResponseRead,
     ImportResult,
+    RequestExecutionApproval,
+    RequestExecutionPreview,
+    RequestExecutionResult,
 )
 from webhacking_lab.core.config import Settings
+from webhacking_lab.core.rate_limit import RequestGate
+from webhacking_lab.http_client.client import SingleHopSender
+from webhacking_lab.http_client.scope_guard import DnsResolver, ScopeGuard
 from webhacking_lab.services.http_requests import HttpRequestService
+from webhacking_lab.services.request_execution import RequestExecutionService
 
 router = APIRouter(tags=["http-data"])
 Session = Annotated[AsyncSession, Depends(get_db_session)]
 ActiveSettings = Annotated[Settings, Depends(get_request_settings)]
+ActiveGate = Annotated[RequestGate, Depends(get_request_gate)]
+ActiveSender = Annotated[SingleHopSender, Depends(get_http_sender)]
+ActiveResolver = Annotated[DnsResolver, Depends(get_dns_resolver)]
 
 
 def correlation_id(request: Request) -> str | None:
@@ -119,3 +135,50 @@ async def get_http_response(
     settings: ActiveSettings,
 ) -> HttpResponseRead:
     return await HttpRequestService(session, settings).get_response(response_id)
+
+
+@router.post(
+    "/requests/{request_id}/execute/preview",
+    response_model=RequestExecutionPreview,
+    summary="Preview an exact controlled request without sending it",
+)
+async def preview_http_request_execution(
+    request_id: UUID,
+    request: Request,
+    session: Session,
+    settings: ActiveSettings,
+    gate: ActiveGate,
+    sender: ActiveSender,
+    resolver: ActiveResolver,
+) -> RequestExecutionPreview:
+    return await RequestExecutionService(
+        session, settings, gate, sender, ScopeGuard(resolver)
+    ).preview(
+        request_id,
+        correlation_id(request),
+    )
+
+
+@router.post(
+    "/requests/{request_id}/execute",
+    response_model=RequestExecutionResult,
+    status_code=status.HTTP_201_CREATED,
+    summary="Send one approved read-only request chain",
+)
+async def execute_http_request(
+    request_id: UUID,
+    data: RequestExecutionApproval,
+    request: Request,
+    session: Session,
+    settings: ActiveSettings,
+    gate: ActiveGate,
+    sender: ActiveSender,
+    resolver: ActiveResolver,
+) -> RequestExecutionResult:
+    return await RequestExecutionService(
+        session, settings, gate, sender, ScopeGuard(resolver)
+    ).execute(
+        request_id,
+        data,
+        correlation_id(request),
+    )

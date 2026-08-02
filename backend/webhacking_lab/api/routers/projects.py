@@ -6,7 +6,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from webhacking_lab.api.dependencies import get_db_session
+from webhacking_lab.api.dependencies import (
+    get_db_session,
+    get_dns_resolver,
+    get_request_settings,
+)
 from webhacking_lab.api.schemas.resources import (
     ProjectCreate,
     ProjectDetail,
@@ -17,13 +21,19 @@ from webhacking_lab.api.schemas.resources import (
     ScopeRuleCreate,
     ScopeRuleRead,
     WorkspaceCreate,
+    WorkspaceExecutionApproval,
+    WorkspaceExecutionDisable,
     WorkspacePatch,
     WorkspaceRead,
 )
+from webhacking_lab.core.config import Settings
+from webhacking_lab.http_client.scope_guard import DnsResolver
 from webhacking_lab.services.projects import ProjectService, ScopeService, WorkspaceService
 
 router = APIRouter(tags=["projects"])
 Session = Annotated[AsyncSession, Depends(get_db_session)]
+ActiveSettings = Annotated[Settings, Depends(get_request_settings)]
+ActiveResolver = Annotated[DnsResolver, Depends(get_dns_resolver)]
 
 
 def correlation_id(request: Request) -> str | None:
@@ -107,8 +117,13 @@ async def check_scope(
     data: ScopeCheckRequest,
     request: Request,
     session: Session,
+    resolver: ActiveResolver,
 ) -> ScopeCheckResponse:
-    return await ScopeService(session).check(project_id, data.url, correlation_id(request))
+    return await ScopeService(session, resolver).check(
+        project_id,
+        data.url,
+        correlation_id(request),
+    )
 
 
 @router.post(
@@ -146,3 +161,40 @@ async def update_workspace(
     session: Session,
 ) -> WorkspaceRead:
     return await WorkspaceService(session).update(workspace_id, data, correlation_id(request))
+
+
+@router.post(
+    "/workspaces/{workspace_id}/execution/enable",
+    response_model=WorkspaceRead,
+    summary="Explicitly enable controlled requests for a workspace",
+)
+async def enable_workspace_execution(
+    workspace_id: UUID,
+    data: WorkspaceExecutionApproval,
+    request: Request,
+    session: Session,
+    settings: ActiveSettings,
+) -> WorkspaceRead:
+    return await WorkspaceService(session, settings).enable_execution(
+        workspace_id,
+        data,
+        correlation_id(request),
+    )
+
+
+@router.post(
+    "/workspaces/{workspace_id}/execution/disable",
+    response_model=WorkspaceRead,
+    summary="Disable controlled requests for a workspace",
+)
+async def disable_workspace_execution(
+    workspace_id: UUID,
+    data: WorkspaceExecutionDisable,
+    request: Request,
+    session: Session,
+) -> WorkspaceRead:
+    return await WorkspaceService(session).disable_execution(
+        workspace_id,
+        data,
+        correlation_id(request),
+    )

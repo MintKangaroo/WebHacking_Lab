@@ -9,9 +9,9 @@ services:
       WEBHACKING_ENVIRONMENT: production
       WEBHACKING_DATABASE_URL: sqlite+aiosqlite:////app/data/webhacking_lab.db
       WEBHACKING_CORS_ORIGINS: '["http://localhost:8080"]'
-      WEBHACKING_ANALYSIS_ONLY: "true"
-      WEBHACKING_NETWORK_EXECUTION_ENABLED: "false"
-      WEBHACKING_ALLOW_INSECURE_TLS: "false"
+      WEBHACKING_ANALYSIS_ONLY: "${WEBHACKING_ANALYSIS_ONLY:-true}"
+      WEBHACKING_NETWORK_EXECUTION_ENABLED: "${WEBHACKING_NETWORK_EXECUTION_ENABLED:-false}"
+      WEBHACKING_ALLOW_INSECURE_TLS: "${WEBHACKING_ALLOW_INSECURE_TLS:-false}"
     volumes:
       - webhacking_data:/app/data
     networks:

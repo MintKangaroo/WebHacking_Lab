@@ -10,6 +10,7 @@ from webhacking_lab.domain.exceptions import ImportFormatError
 from webhacking_lab.http_client.models import (
     NormalizedRequest,
     NormalizedResponse,
+    RedirectHop,
 )
 
 
@@ -129,6 +130,7 @@ def normalize_response(
     cookies: list[tuple[str, str]] | None = None,
     body: str = "",
     elapsed_ms: float | None = None,
+    redirect_history: list[RedirectHop] | None = None,
     max_body_bytes: int,
 ) -> NormalizedResponse:
     """Normalize and redact an imported response."""
@@ -148,6 +150,7 @@ def normalize_response(
         content_type=content_type,
         character_encoding=charset,
         elapsed_ms=elapsed_ms,
+        redirect_history=redirect_history or [],
         body_hash=digest,
         normalized_body_hash=digest,
     )

@@ -175,6 +175,24 @@ class HttpResponse(TimestampedUuidMixin, VersionedEntityMixin, Base):
     request: Mapped[HttpRequest] = relationship(back_populates="responses")
 
 
+class AnalysisRun(TimestampedUuidMixin, VersionedEntityMixin, Base):
+    """Persisted passive analysis result and workflow graph."""
+
+    __tablename__ = "analysis_runs"
+
+    request_id: Mapped[UUID] = mapped_column(
+        ForeignKey("http_requests.id", ondelete="CASCADE"),
+        index=True,
+    )
+    response_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("http_responses.id", ondelete="SET NULL"),
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(32), default="completed")
+    results_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    flow_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
 class AuditEvent(TimestampedUuidMixin, Base):
     """Append-only event with redacted details."""
 

@@ -14,7 +14,7 @@ class StrictSchema(BaseModel):
 class SafetyStatus(StrictSchema):
     """Public subset of enforced safety defaults."""
 
-    mode: Literal["Analysis Only"]
+    mode: Literal["Analysis Only", "Controlled Execution"]
     network_execution_enabled: bool
     insecure_tls_allowed: bool
     max_response_bytes: int

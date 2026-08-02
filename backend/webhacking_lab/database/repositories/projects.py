@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -57,6 +57,22 @@ class WorkspaceRepository:
             )
         )
         return workspace
+
+    async def consume_request_budget(self, workspace_id: UUID) -> bool:
+        """Atomically consume one request only when budget remains and execution is enabled."""
+
+        consumed_id = await self._session.scalar(
+            update(Workspace)
+            .where(
+                Workspace.id == workspace_id,
+                Workspace.deleted_at.is_(None),
+                Workspace.network_execution_enabled.is_(True),
+                Workspace.requests_used < Workspace.request_budget,
+            )
+            .values(requests_used=Workspace.requests_used + 1)
+            .returning(Workspace.id)
+        )
+        return consumed_id is not None
 
 
 class ScopeRuleRepository:

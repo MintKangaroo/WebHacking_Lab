@@ -14,9 +14,12 @@ from webhacking_lab.api.schemas.resources import (
     ScopeRuleCreate,
     ScopeRuleRead,
     WorkspaceCreate,
+    WorkspaceExecutionApproval,
+    WorkspaceExecutionDisable,
     WorkspacePatch,
     WorkspaceRead,
 )
+from webhacking_lab.core.config import Settings
 from webhacking_lab.database.models import Project, ScopeRule, Workspace
 from webhacking_lab.database.repositories.audit import AuditRepository
 from webhacking_lab.database.repositories.projects import (
@@ -28,6 +31,7 @@ from webhacking_lab.domain.enums import AnalysisMode, AuditEventType, WorkspaceM
 from webhacking_lab.domain.exceptions import (
     ConflictError,
     EntityNotFoundError,
+    ExecutionPolicyError,
     ScopeValidationError,
 )
 from webhacking_lab.http_client.models import ScopeDecision, ScopeRuleSpec
@@ -165,13 +169,14 @@ class ProjectService:
 
 
 class WorkspaceService:
-    """Manage analysis-only workspaces."""
+    """Manage workspaces and their explicit network-execution state."""
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, settings: Settings | None = None) -> None:
         self._session = session
         self._projects = ProjectRepository(session)
         self._workspaces = WorkspaceRepository(session)
         self._audit = AuditRepository(session)
+        self._settings = settings
 
     async def create(self, data: WorkspaceCreate, correlation_id: str | None) -> WorkspaceRead:
         project = await self._projects.get(data.project_id)
@@ -226,6 +231,68 @@ class WorkspaceService:
             workspace_id=workspace.id,
             correlation_id=correlation_id,
             details={"changed_fields": sorted(changes)},
+        )
+        await self._session.refresh(workspace, attribute_names=["updated_at"])
+        return workspace_read(workspace)
+
+    async def enable_execution(
+        self,
+        workspace_id: UUID,
+        data: WorkspaceExecutionApproval,
+        correlation_id: str | None,
+    ) -> WorkspaceRead:
+        """Enable controlled execution only when the process policy also allows it."""
+
+        if (
+            self._settings is None
+            or self._settings.analysis_only
+            or not self._settings.network_execution_enabled
+        ):
+            raise ExecutionPolicyError(
+                "Network execution is disabled by the server. Set the two safety environment "
+                "switches explicitly before enabling a workspace."
+            )
+        workspace = await self._workspaces.get(workspace_id)
+        if workspace is None:
+            raise EntityNotFoundError("Workspace was not found")
+        if workspace.version != data.version:
+            raise ConflictError("Workspace was modified by another operation")
+        workspace.network_execution_enabled = True
+        workspace.version += 1
+        await self._audit.record(
+            AuditEventType.WORKSPACE_EXECUTION_ENABLED,
+            resource_type="workspace",
+            resource_id=workspace.id,
+            project_id=workspace.project_id,
+            workspace_id=workspace.id,
+            correlation_id=correlation_id,
+            details={"expected_use": data.expected_use.strip()},
+        )
+        await self._session.refresh(workspace, attribute_names=["updated_at"])
+        return workspace_read(workspace)
+
+    async def disable_execution(
+        self,
+        workspace_id: UUID,
+        data: WorkspaceExecutionDisable,
+        correlation_id: str | None,
+    ) -> WorkspaceRead:
+        """Immediately return a workspace to analysis-only behavior."""
+
+        workspace = await self._workspaces.get(workspace_id)
+        if workspace is None:
+            raise EntityNotFoundError("Workspace was not found")
+        if workspace.version != data.version:
+            raise ConflictError("Workspace was modified by another operation")
+        workspace.network_execution_enabled = False
+        workspace.version += 1
+        await self._audit.record(
+            AuditEventType.WORKSPACE_EXECUTION_DISABLED,
+            resource_type="workspace",
+            resource_id=workspace.id,
+            project_id=workspace.project_id,
+            workspace_id=workspace.id,
+            correlation_id=correlation_id,
         )
         await self._session.refresh(workspace, attribute_names=["updated_at"])
         return workspace_read(workspace)
@@ -323,6 +390,7 @@ class ScopeService:
                 allow_subdomains=rule.allow_subdomains,
                 max_requests_per_minute=rule.max_requests_per_minute,
                 max_concurrency=rule.max_concurrency,
+                authorization_confirmed=rule.authorization_confirmed,
             )
             for rule in rules
         ]

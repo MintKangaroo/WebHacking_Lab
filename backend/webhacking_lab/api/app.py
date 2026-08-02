@@ -12,6 +12,7 @@ from starlette.middleware.base import RequestResponseEndpoint
 
 from webhacking_lab import __version__
 from webhacking_lab.api.errors import install_error_handlers
+from webhacking_lab.api.routers.analysis import router as analysis_router
 from webhacking_lab.api.routers.audit import router as audit_router
 from webhacking_lab.api.routers.http_requests import router as http_requests_router
 from webhacking_lab.api.routers.projects import router as projects_router
@@ -22,7 +23,10 @@ from webhacking_lab.core.logging import (
     configure_logging,
     reset_correlation_id,
 )
+from webhacking_lab.core.rate_limit import RequestGate
 from webhacking_lab.database.session import Database, ensure_sqlite_directory
+from webhacking_lab.http_client.client import HttpxPinnedSender
+from webhacking_lab.http_client.scope_guard import SystemDnsResolver
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -63,6 +67,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     application.state.settings = active_settings
+    application.state.request_gate = RequestGate()
+    application.state.http_sender = HttpxPinnedSender(
+        timeout_seconds=active_settings.request_timeout_seconds,
+        max_response_bytes=active_settings.max_response_bytes,
+    )
+    application.state.dns_resolver = SystemDnsResolver()
     application.add_middleware(
         CORSMiddleware,
         allow_origins=active_settings.cors_origins,
@@ -99,6 +109,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(projects_router, prefix="/api")
     application.include_router(http_requests_router, prefix="/api")
     application.include_router(audit_router, prefix="/api")
+    application.include_router(analysis_router, prefix="/api")
     install_error_handlers(application)
     return application
 

@@ -26,7 +26,7 @@ def safety_status(settings: Settings) -> SafetyStatus:
     """Map internal settings to the safe public status model."""
 
     return SafetyStatus(
-        mode="Analysis Only",
+        mode="Analysis Only" if settings.analysis_only else "Controlled Execution",
         network_execution_enabled=settings.network_execution_enabled,
         insecure_tls_allowed=settings.allow_insecure_tls,
         max_response_bytes=settings.max_response_bytes,

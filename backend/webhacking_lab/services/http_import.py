@@ -185,13 +185,14 @@ def import_har(
             and not any(name.lower() == "content-type" for name, _ in headers)
         ):
             headers.append(("Content-Type", str(post_data["mimeType"])))
+        query_items = _pairs(request_data.get("queryString"))
         request = normalize_request(
             method=str(request_data.get("method", "GET")),
             url=str(request_data.get("url", "")),
             headers=headers,
             cookies=_pairs(request_data.get("cookies")),
             body=str(body),
-            query=_pairs(request_data.get("queryString")),
+            query=query_items or None,
             max_body_bytes=max_request_bytes,
         )
 

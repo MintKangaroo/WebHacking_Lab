@@ -112,6 +112,26 @@ def test_har_import_normalizes_request_and_response() -> None:
     assert exchange.response.body == '{"token":"[REDACTED]"}'
 
 
+def test_har_import_falls_back_to_url_query_when_query_string_is_omitted() -> None:
+    document = json.loads(_har())
+    request = document["log"]["entries"][0]["request"]
+    request["url"] = "https://ctf.example/challenge/search?q=hello&q=again"
+    request.pop("queryString")
+
+    exchange = import_har(
+        json.dumps(document),
+        max_har_bytes=20_000,
+        max_entries=5,
+        max_request_bytes=4096,
+        max_response_bytes=4096,
+    )[0]
+
+    assert [(item.name, item.value) for item in exchange.request.query] == [
+        ("q", "hello"),
+        ("q", "again"),
+    ]
+
+
 @pytest.mark.parametrize(
     "payload",
     [

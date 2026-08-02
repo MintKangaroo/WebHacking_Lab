@@ -5,8 +5,12 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 
 WORKDIR /build
 COPY backend/pyproject.toml README.md ./
+RUN mkdir -p webhacking_lab \
+    && touch webhacking_lab/__init__.py \
+    && python -m pip wheel --wheel-dir /wheels .
 COPY backend/webhacking_lab ./webhacking_lab
-RUN python -m pip wheel --wheel-dir /wheels .
+RUN rm /wheels/webhacking_lab-*.whl \
+    && python -m pip wheel --no-deps --wheel-dir /wheels .
 
 FROM python:3.12-slim AS test
 

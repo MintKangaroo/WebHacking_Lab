@@ -102,6 +102,7 @@ class ScopeRuleSpec(StrictModel):
     allow_subdomains: bool = False
     max_requests_per_minute: int = Field(default=10, ge=1, le=120)
     max_concurrency: int = Field(default=2, ge=1, le=5)
+    authorization_confirmed: bool = False
 
 
 class ScopeDecision(StrictModel):
