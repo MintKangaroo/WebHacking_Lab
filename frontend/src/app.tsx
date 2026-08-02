@@ -92,6 +92,7 @@ export function App() {
                     <Route path="projects" element={<ProjectsPage />} />
                     <Route path="projects/:projectId" element={<ProjectPage />} />
                     <Route path="repeater" element={<RepeaterPage />} />
+                    <Route path="analyzer" element={<RepeaterPage />} />
                     <Route path="*" element={<Navigate to="/" replace />} />
                   </Route>
                 </Routes>

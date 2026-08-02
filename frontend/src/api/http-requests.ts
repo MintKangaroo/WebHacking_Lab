@@ -1,5 +1,11 @@
-import { apiJson } from "./client";
-import type { ImportResult, NameValue, NormalizedRequest } from "../types/resources";
+import { apiGet, apiJson } from "./client";
+import type {
+  HttpRequestRecord,
+  ImportResult,
+  NameValue,
+  RequestExecutionPreview,
+  RequestExecutionResult,
+} from "../types/resources";
 
 export function importCurl(input: {
   command: string;
@@ -24,8 +30,34 @@ export function storeRequest(input: {
   headers: Array<Omit<NameValue, "redacted">>;
   body: string;
 }) {
-  return apiJson<{ normalized: NormalizedRequest }, typeof input>(
+  return apiJson<HttpRequestRecord, typeof input>(
     "/requests",
+    "POST",
+    input,
+  );
+}
+
+export function getRequest(requestId: string, signal?: AbortSignal) {
+  return apiGet<HttpRequestRecord>(`/requests/${requestId}`, signal);
+}
+
+export function previewRequestExecution(requestId: string) {
+  return apiJson<RequestExecutionPreview>(
+    `/requests/${requestId}/execute/preview`,
+    "POST",
+  );
+}
+
+export function executeRequest(
+  requestId: string,
+  input: {
+    confirmation_phrase: "SEND UP TO 5 SAFE REQUESTS";
+    approval_token: string;
+    request_version: number;
+  },
+) {
+  return apiJson<RequestExecutionResult, typeof input>(
+    `/requests/${requestId}/execute`,
     "POST",
     input,
   );

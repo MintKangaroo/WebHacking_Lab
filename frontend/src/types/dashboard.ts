@@ -1,5 +1,5 @@
 export type SafetyStatus = {
-  mode: "Analysis Only";
+  mode: "Analysis Only" | "Controlled Execution";
   network_execution_enabled: boolean;
   insecure_tls_allowed: boolean;
   max_response_bytes: number;

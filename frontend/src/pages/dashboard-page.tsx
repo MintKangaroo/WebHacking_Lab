@@ -23,6 +23,7 @@ import { SafetyPanel } from "../features/dashboard/safety-panel";
 
 function DashboardContent() {
   const { data } = useSuspenseQuery(dashboardQueryOptions());
+  const controlledExecution = data.safety.mode === "Controlled Execution";
 
   return (
     <div className="mx-auto max-w-[1600px] space-y-6 p-4 sm:p-6 lg:p-8">
@@ -56,23 +57,24 @@ function DashboardContent() {
 
       <section
         aria-label="Safety mode"
-        className="flex flex-col gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/[0.045] px-4 py-3 sm:flex-row sm:items-center"
+        className={`flex flex-col gap-3 rounded-xl border px-4 py-3 sm:flex-row sm:items-center ${controlledExecution ? "border-amber-500/20 bg-amber-500/[0.045]" : "border-emerald-500/20 bg-emerald-500/[0.045]"}`}
       >
-        <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-emerald-400/10">
-          <ShieldCheck className="size-4 text-emerald-300" aria-hidden="true" />
+        <div className={`grid size-8 shrink-0 place-items-center rounded-lg ${controlledExecution ? "bg-amber-400/10" : "bg-emerald-400/10"}`}>
+          <ShieldCheck className={`size-4 ${controlledExecution ? "text-amber-300" : "text-emerald-300"}`} aria-hidden="true" />
         </div>
         <div className="min-w-0">
-          <p className="text-xs font-medium text-emerald-200">
-            Analysis Only mode is enforced
+          <p className={`text-xs font-medium ${controlledExecution ? "text-amber-200" : "text-emerald-200"}`}>
+            {controlledExecution ? "Controlled execution is globally available" : "Analysis Only mode is enforced"}
           </p>
-          <p className="mt-0.5 text-[11px] text-emerald-200/50">
-            Network execution is disabled. All visible activity is sanitized demo or local
-            workspace data.
+          <p className={`mt-0.5 text-[11px] ${controlledExecution ? "text-amber-200/50" : "text-emerald-200/50"}`}>
+            {controlledExecution
+              ? "Each workspace, Scope rule, exact request, budget, and redirect still requires policy approval."
+              : "Network execution is disabled. All visible activity is sanitized demo or local workspace data."}
           </p>
         </div>
-        <Badge tone="safe" className="w-fit sm:ml-auto">
+        <Badge tone={controlledExecution ? "warning" : "safe"} className="w-fit sm:ml-auto">
           <RadioTower className="size-2.5" />
-          No outbound requests
+          {controlledExecution ? "Per-request approval" : "No outbound requests"}
         </Badge>
       </section>
 

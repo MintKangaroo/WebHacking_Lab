@@ -11,6 +11,7 @@
     "test": "vitest run --coverage",
     "test:watch": "vitest",
     "e2e": "playwright test",
+    "screenshots": "node scripts/capture-screenshots.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -8,6 +8,7 @@ export default defineConfig({
       output: {
         manualChunks: {
           charts: ["recharts"],
+          flow: ["@xyflow/react"],
           query: ["@tanstack/react-query"],
           react: ["react", "react-dom", "react-router-dom"],
         },

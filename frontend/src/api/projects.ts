@@ -5,6 +5,7 @@ import type {
   ScopeDecision,
   ScopeRule,
   WorkspaceMode,
+  Workspace,
 } from "../types/resources";
 
 export type CreateProjectInput = {
@@ -48,5 +49,29 @@ export function checkScope(projectId: string, url: string) {
     `/projects/${projectId}/scope/check`,
     "POST",
     { url },
+  );
+}
+
+export function enableWorkspaceExecution(
+  workspaceId: string,
+  input: {
+    authorization_confirmed: true;
+    confirmation_phrase: "ENABLE CONTROLLED REQUESTS";
+    expected_use: string;
+    version: number;
+  },
+) {
+  return apiJson<Workspace, typeof input>(
+    `/workspaces/${workspaceId}/execution/enable`,
+    "POST",
+    input,
+  );
+}
+
+export function disableWorkspaceExecution(workspaceId: string, version: number) {
+  return apiJson<Workspace, { version: number }>(
+    `/workspaces/${workspaceId}/execution/disable`,
+    "POST",
+    { version },
   );
 }

@@ -40,7 +40,7 @@ const primaryNavigation: NavigationItem[] = [
   { label: "Overview", icon: Activity, available: true, path: "/" },
   { label: "Projects", icon: FolderKanban, available: true, path: "/projects" },
   { label: "HTTP Repeater", icon: TerminalSquare, available: true, path: "/repeater" },
-  { label: "Analyzer", icon: Braces, available: false },
+  { label: "Analyzer", icon: Braces, available: true, path: "/analyzer" },
   { label: "Attack Flow", icon: GitBranch, available: false },
 ];
 
@@ -227,10 +227,10 @@ function Topbar() {
           ⌘K
         </kbd>
       </Button>
-      <div className="ml-3 hidden items-center gap-3 sm:flex">
+      <div className="ml-auto hidden items-center gap-3 sm:flex">
         <Badge tone="safe">
           <CircleDot className="size-2.5 fill-current" />
-          Analysis Only
+          Safety gated
         </Badge>
         <div
           className="grid size-8 place-items-center rounded-full border border-violet-400/20 bg-violet-400/10 text-[11px] font-semibold text-violet-200"
