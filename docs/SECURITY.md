@@ -31,6 +31,14 @@ Scope, an execution-enabled workspace, and remaining request budget. The job
 uses the same request gateway for every page and redirect; it cannot switch to
 an active profile after creation.
 
+Phase 9 adds a separate `SAFE` job profile. It finishes passive collection,
+persists exact low-risk request previews, and stops in `Waiting for Approval`.
+Only selected preview IDs can move to execution, every row is limited to one
+GET or OPTIONS request, and the shared gateway rechecks server mode, workspace,
+Scope, DNS/IP, rate, budget, timeout, size, and redaction. Unselected previews
+remain unsent. SQL extraction, timing delays, executable XSS, writes, command
+execution, credentials, and request bodies are denied.
+
 External targets remain disabled until both process switches are explicitly
 enabled, an authorization-backed project scope exists, the workspace is
 enabled with a stated purpose, and the exact request preview is confirmed.
@@ -47,7 +55,7 @@ enabled with a stated purpose, and the exact request preview is confirmed.
   addresses while retaining the original hostname for TLS SNI.
 - Global and per-target rolling-minute limits, target concurrency, workspace
   budget, timeout, maximum response bytes, and redirect count are enforced.
-- Passive analyzers can propose bounded tests but cannot call the client.
+- Passive analyzers and active plugins can propose bounded tests but cannot call the client.
 - Passive Scanner requests are sequential GETs. Browser JavaScript, form
   submission, login automation, active mutation, downloads, and OpenAPI path
   template execution are disabled.
@@ -56,6 +64,11 @@ enabled with a stated purpose, and the exact request preview is confirmed.
   request.
 - Discovered query secrets are masked in inventory and omitted by the request
   gateway. Parser output cannot introduce a new origin outside registered Scope.
+- SAFE mutation is centralized: secret-shaped parameters, destructive flags,
+  multi-request cases, medium/high risk, modifying SQL keywords, comments,
+  semicolons, and unsupported mutation types are rejected.
+- SAFE redirect observations do not follow `Location`; they store the first
+  redacted response so an external marker cannot become an outbound request.
 
 ## Dependency advisory note
 

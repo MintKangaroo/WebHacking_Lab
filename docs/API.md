@@ -36,7 +36,7 @@ Approval token은 요청 revision, 워크스페이스 revision, Scope rule, 정�
 
 Preview에는 승인 1회당 최대 요청 수와 요청별 최대 응답 바이트가 포함됩니다. 실제 스트리밍 계층은 서버 전역 상한과 호출 기능의 더 작은 상한 중 작은 값을 사용합니다.
 
-## Passive URL Scanner
+## PASSIVE / SAFE URL Scanner
 
 Scanner는 별도 네트워크 경로를 만들지 않습니다. 프로젝트 Scope와 워크스페이스 실행 승인을 마친 뒤 다음처럼 명시적인 bounded plan을 제출합니다.
 
@@ -60,6 +60,12 @@ Content-Type: application/json
     "respect_logout_routes": true,
     "execute_javascript": false
   },
+  "active_test_policy": {
+    "enabled": false,
+    "max_tests": 6,
+    "max_tests_per_parameter": 6,
+    "allow_limited_timing": false
+  },
   "authorization_confirmed": true,
   "confirmation_phrase": "START PASSIVE SCAN",
   "expected_use": "Authorized passive application inventory"
@@ -75,10 +81,25 @@ GET  /api/scans/{scan_id}/events
 GET  /api/scans/{scan_id}/endpoints
 GET  /api/scans/{scan_id}/parameters
 GET  /api/scans/{scan_id}/findings
+GET  /api/scans/{scan_id}/tests
+POST /api/scans/{scan_id}/approve-tests
 POST /api/scans/{scan_id}/cancel
 ```
 
-현재 서버가 허용하는 프로필은 `passive`뿐입니다. `safe`, `ctf`, `local_lab`은 구현되지 않은 active 기능으로 간주해 `403 execution_blocked`로 종료합니다. `execute_javascript=true`도 허용하지 않습니다. 외부 호스트는 권한 확인이 저장된 Scope 안에 있어야 하며 모든 redirect는 다시 검사됩니다.
+SAFE를 시작하려면 `profile`을 `safe`, 확인 문구를 `START SAFE SCAN`, `active_test_policy.enabled`를 `true`로 설정합니다. 수집이 끝나면 작업은 `waiting_for_approval`에서 멈춥니다.
+
+```http
+POST /api/scans/{scan_id}/approve-tests
+Content-Type: application/json
+
+{
+  "test_ids": ["<preview uuid>"],
+  "authorization_confirmed": true,
+  "confirmation_phrase": "APPROVE SELECTED SAFE TESTS"
+}
+```
+
+선택한 Preview만 각각 한 요청으로 실행됩니다. `ctf`, `local_lab`, browser JavaScript, limited timing과 extraction은 아직 차단됩니다. 외부 호스트는 권한 확인이 저장된 Scope 안에 있어야 합니다. Crawl redirect는 매 hop을 재검사하고, SAFE 관찰 요청은 redirect를 따라가지 않은 채 첫 응답 증거만 저장합니다.
 
 ## 분석
 

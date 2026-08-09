@@ -10,7 +10,7 @@ The application is a React single-page client backed by a typed FastAPI API.
 SQLAlchemy repositories own persistence, domain services own state transitions,
 and routers only translate transport models.
 
-## Current Phase 8 components
+## Current Phase 9 components
 
 | Component | Responsibility |
 | --- | --- |
@@ -25,15 +25,15 @@ and routers only translate transport models.
 | Request gateway | Exact preview, safe method policy, redirect checks, limits, budget |
 | Diff engine | Dynamic normalization plus JSON, HTML, header, timing comparisons |
 | Analysis engine | Six passive plugins with evidence, confidence, tests, limitations |
-| Scanner engine | Cancellable bounded crawl, content discovery, inventories, fingerprints |
+| Scanner engine | Cancellable crawl, inventories, exact SAFE previews and evidence evaluation |
 | Database | Async repositories, SQLite/PostgreSQL models, Alembic revisions |
 | Request context | Correlation IDs and structured lifecycle logging |
 | Containers | Non-root runtime, reduced capabilities, health checks |
 
 ## Execution boundary
 
-The Repeater and passive URL Scanner call the guarded gateway. Future active
-plugins and PoC verification must call the same service and may not instantiate
+The Repeater, crawler, and approved SAFE tests call the guarded gateway. Future
+PoC verification must call the same service and may not instantiate
 a general-purpose HTTPX client in feature code.
 
 ```mermaid
@@ -63,7 +63,7 @@ hostname allowlisting.
 
 ## URL scanner extension
 
-Phase 8 provides a bounded job engine and inventory pipeline:
+Phase 8–9 provide a bounded inventory and separately approved validation pipeline:
 
 ```mermaid
 flowchart LR
@@ -75,12 +75,16 @@ flowchart LR
     E --> PA[Passive analysis]
     P --> PA[Passive analysis]
     PA --> DB[(Inventory + findings + events)]
+    PA --> TP[SAFE exact previews]
+    TP --> UA[User selects and approves]
+    UA --> GW[Shared execution gateway]
+    GW --> EV[Runtime evidence]
 ```
 
-Profiles are capabilities, not cosmetic labels. The current engine accepts only
-`PASSIVE`: sequential GET retrieval, no request body, no stored credentials, no
-JavaScript execution, and no mutation. `SAFE`, `CTF`, and `LOCAL_LAB` are rejected
-until their separate test-planning and approval policy is implemented.
+Profiles are capabilities, not cosmetic labels. `PASSIVE` performs sequential
+GET retrieval with no mutation. `SAFE` performs the same collection, prepares a
+small set of INFO/LOW-risk exact previews, and stops before execution. A second
+approval selects individual single requests. `CTF` and `LOCAL_LAB` remain rejected.
 Cancellation and request-budget checks occur before every queued request.
 Scanner pacing is also capped by both the matched Scope rule's per-minute limit
 and the process-wide per-minute limit, regardless of a faster user-selected

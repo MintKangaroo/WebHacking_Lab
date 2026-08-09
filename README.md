@@ -2,7 +2,7 @@
 
 CTF, 로컬 랩, 명시적으로 허가받은 모의해킹의 HTTP 증거를 한곳에서 분석하는 안전 중심 웹 보안 워크스페이스입니다.
 
-요청·응답 정규화, 민감정보 마스킹, Scope 관리, 제한적 외부 요청, 응답 Diff, 6개 수동 분석기, React Flow 분석 흐름과 **안전한 Passive URL Scanner**가 실제 FastAPI 데이터로 동작합니다.
+요청·응답 정규화, 민감정보 마스킹, Scope 관리, 제한적 외부 요청, 응답 Diff, 6개 수동 분석기, React Flow 분석 흐름과 **승인형 SAFE URL Scanner**가 실제 FastAPI 데이터로 동작합니다.
 
 > 기본값은 **Analysis Only**입니다. 외부 요청은 서버 설정, 프로젝트 Scope, 권한 확인, 워크스페이스 승인, 요청별 최종 확인을 모두 통과해야 합니다.
 
@@ -16,7 +16,9 @@ CTF, 로컬 랩, 명시적으로 허가받은 모의해킹의 HTTP 증거를 한
 | --- | --- |
 | ![수동 분석 결과](docs/screenshots/analysis-results.png) | ![분석 흐름](docs/screenshots/analysis-flow.png) |
 
-![Scope 기반 Passive URL Scanner](docs/screenshots/url-scanner.png)
+| Scope 기반 URL Scanner | 정확한 SAFE 요청 개별 승인 |
+| --- | --- |
+| ![Scope 기반 URL Scanner](docs/screenshots/url-scanner.png) | ![SAFE 테스트 승인](docs/screenshots/safe-test-approval.png) |
 
 ## 빠른 시작
 
@@ -105,10 +107,13 @@ docker compose up --build
 1. 좌측 **URL Scanner**를 엽니다.
 2. 실행 승인이 끝난 프로젝트와 워크스페이스를 선택합니다.
 3. 등록된 Scope 안의 시작 URL을 입력합니다.
-4. Depth, Pages, Requests, 초당 요청 수를 확인합니다. 처음에는 `Depth 2 / Pages 20 / Requests 30 / 1 req/s`를 권장합니다. 실제 속도는 Scope와 전역 분당 한도 중 더 낮은 값으로 자동 조정됩니다.
+4. `PASSIVE` 또는 `SAFE`를 선택합니다. 처음에는 `Depth 1 / Pages 10 / Requests 10 / 1 req/s`를 권장합니다.
 5. 승인된 사용 목적을 적고 권한 확인란을 선택합니다.
-6. **Start passive scan**을 누릅니다.
-7. 실시간으로 Endpoint, Parameter, Passive Finding, Policy Event를 확인합니다. 필요하면 **Stop scan**으로 중단합니다.
+6. **Start PASSIVE scan** 또는 **Start SAFE scan**을 누릅니다.
+7. Endpoint, Parameter, Finding, Policy Event를 확인합니다. 필요하면 **Stop scan**으로 중단합니다.
+8. SAFE는 자동 실행되지 않고 **Waiting for Approval**에서 멈춥니다.
+9. **Tests**에서 정확한 HTTP 요청, 목적, 위험, 성공 기준, 오탐 가능성을 읽고 필요한 항목만 선택합니다.
+10. **Approve selected tests**를 누르면 선택한 단일 요청만 기존 Scope Guard를 통해 실행됩니다.
 
 Scanner가 자동으로 확인하는 범위:
 
@@ -118,7 +123,7 @@ Scanner가 자동으로 확인하는 범위:
 - Query, Form, JSON, Multipart parameter inventory
 - 서버/프레임워크 단서, Security Header, CORS, Cookie, JWT, XSS 반사, SQL 오류 지표
 
-현재 Scanner는 `PASSIVE` 프로필만 실행합니다. GET 기반 문서 수집만 수행하고, JavaScript 실행·로그인 자동화·파라미터 변형·취약점 payload·active test는 만들거나 보내지 않습니다. 발견한 OpenAPI 경로 템플릿은 Inventory에는 기록하지만 실제 URL로 요청하지 않습니다.
+`PASSIVE`는 GET 기반 수집만 합니다. `SAFE`는 수집 후 최대 10개의 낮은 위험 테스트를 Preview로 만들며, 사용자가 개별 승인하기 전에는 한 건도 보내지 않습니다. 현재 SAFE 플러그인은 SQL 오류·숫자형 boolean 차이, 실행 불가능한 XSS 반사 marker, 따라가지 않는 예약 도메인 redirect, 단일 CORS OPTIONS 관찰을 지원합니다. 시간 지연, 데이터 추출, 파일/DB 쓰기, 명령 실행, JavaScript 실행, 로그인 자동화는 비활성화되어 있습니다.
 
 ## 현재 기능
 
@@ -134,9 +139,11 @@ Scanner가 자동으로 확인하는 범위:
 - 6개 passive analyzer와 `Observation / Suspicious / Likely / Not Tested` 구분
 - 실행되지 않은 안전 테스트 제안과 분석 한계 표시
 - React Flow 분석 그래프와 노드 Inspector
-- 취소 가능한 Passive Scan Job과 실시간 진행률·요청 예산
+- 취소 가능한 PASSIVE/SAFE Scan Job과 실시간 진행률·요청 예산
 - HTML/JS/robots/sitemap/OpenAPI 기반 Endpoint·Parameter Inventory
 - 기존 6개 분석기를 재사용하는 URL별 Passive Finding
+- 정확한 SAFE 요청 Preview, 개별 선택 승인, runtime evidence와 상태 구분
+- SQL 오류·boolean, inert XSS reflection, open redirect, CORS SAFE 플러그인
 - 스캔 응답 크기 제한을 스트리밍 다운로드 단계에서 강제
 - SQLite 기본, PostgreSQL 선택 지원, Alembic migration
 - non-root/read-only Docker 런타임과 GitHub Actions
@@ -151,13 +158,15 @@ flowchart TD
     API --> SG[Scope Guard]
     API --> HC[DNS-pinned HTTP Client]
     API --> AN[Passive Analysis Engine]
-    API --> SC[Passive URL Scanner]
+    API --> SC[PASSIVE / SAFE URL Scanner]
+    SC --> TP[Test Preview + Approval]
     API --> DF[Diff Engine]
     API --> AU[Audit Log]
     API --> DB[(SQLite / PostgreSQL)]
     SG --> RL[Rate + Concurrency + Budget]
     RL --> HC
     SC --> RL
+    TP --> RL
     HC --> RG[Redirect Revalidation]
     RG --> RD[Response Limit + Redaction]
     RD --> DB
@@ -204,6 +213,8 @@ GET    /api/scans/{scan_id}/endpoints
 GET    /api/scans/{scan_id}/parameters
 GET    /api/scans/{scan_id}/findings
 GET    /api/scans/{scan_id}/events
+GET    /api/scans/{scan_id}/tests
+POST   /api/scans/{scan_id}/approve-tests
 GET    /api/audit-events
 ```
 
@@ -243,7 +254,7 @@ npx playwright install chromium
 PLAYWRIGHT_BASE_URL=http://127.0.0.1:8080 npm run e2e
 ```
 
-현재 Backend 81개, Frontend 9개 unit/integration, Playwright 핵심 E2E를 포함합니다. 자동 테스트는 실제 외부 서비스에 요청하지 않습니다.
+현재 Backend 90개, Frontend 10개 unit/integration, Playwright 핵심 E2E를 포함합니다. 자동 테스트는 fake DNS/transport 또는 로컬 컨테이너만 사용하며 실제 외부 서비스에 요청하지 않습니다.
 
 ## 환경 변수
 
@@ -269,9 +280,9 @@ PLAYWRIGHT_BASE_URL=http://127.0.0.1:8080 npm run e2e
 
 ## 현재 제한과 로드맵
 
-현재 구현 범위는 Foundation, HTTP Workspace, 제한적 외부 Repeater, Diff, Passive Analysis, React Flow 기초, Phase 8 Passive URL Scanner입니다.
+현재 구현 범위는 Foundation, HTTP Workspace, 제한적 외부 Repeater, Diff, Passive Analysis, React Flow 기초, Phase 8 URL Scanner와 Phase 9 승인형 SAFE Scanner입니다.
 
-- URL crawler는 Passive 프로필만 지원하며 SAFE/CTF/LOCAL_LAB active test plan과 개별 승인은 후속 Phase입니다.
+- URL crawler는 PASSIVE와 SAFE를 지원합니다. CTF/LOCAL_LAB 프로필, 제한적 timing test와 extraction은 아직 비활성화되어 있습니다.
 - Source ZIP 업로드와 AST taint analysis는 아직 없습니다.
 - CTF Workspace, Encoding Workbench, 5개 격리 Lab, Finding/Report는 후속 Phase입니다.
 - 저장된 인증정보는 의도적으로 실행에 재사용하지 않아 로그인 세션 크롤링은 지원하지 않습니다.

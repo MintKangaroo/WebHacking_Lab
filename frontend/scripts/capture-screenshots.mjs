@@ -75,12 +75,12 @@ const scanResponse = await page.request.post(`${baseURL}/api/scans`, {
   data: {
     project_id: project.id,
     workspace_id: workspace.id,
-    target: "http://backend:8000/api/health",
-    profile: "passive",
+    target: "http://backend:8000/api/health?probe=1&next=%2Fapi%2Fhealth",
+    profile: "safe",
     crawl_policy: {
       max_depth: 1,
-      max_pages: 5,
-      max_requests: 5,
+      max_pages: 1,
+      max_requests: 1,
       max_response_bytes: 2000000,
       requests_per_second: 5,
       concurrency: 1,
@@ -88,18 +88,28 @@ const scanResponse = await page.request.post(`${baseURL}/api/scans`, {
       respect_logout_routes: true,
       execute_javascript: false,
     },
+    active_test_policy: {
+      enabled: true,
+      max_tests: 6,
+      max_tests_per_parameter: 6,
+      allow_limited_timing: false,
+    },
     authorization_confirmed: true,
-    confirmation_phrase: "START PASSIVE SCAN",
-    expected_use: "Local screenshot of the bounded passive inventory workflow.",
+    confirmation_phrase: "START SAFE SCAN",
+    expected_use: "Local screenshot of exact-request SAFE planning and approval.",
   },
 });
 if (!scanResponse.ok()) throw new Error(await scanResponse.text());
 const scan = await scanResponse.json();
+let plannedTestsCount = 0;
 for (let attempt = 0; attempt < 40; attempt += 1) {
   const statusResponse = await page.request.get(`${baseURL}/api/scans/${scan.id}`);
   if (!statusResponse.ok()) throw new Error(await statusResponse.text());
   const scanStatus = await statusResponse.json();
-  if (["completed", "cancelled", "failed", "blocked"].includes(scanStatus.status)) break;
+  if (["waiting_for_approval", "completed", "cancelled", "failed", "blocked"].includes(scanStatus.status)) {
+    plannedTestsCount = scanStatus.planned_tests_count;
+    break;
+  }
   await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
 }
 
@@ -116,10 +126,21 @@ await page.screenshot({
 
 await page.goto(`${baseURL}/scans`);
 await page.getByLabel("Project").selectOption({ label: projectName });
-await page.getByText("http://backend:8000/api/health").first().waitFor();
+await page.getByLabel("Scan profile").selectOption("safe");
+await page.getByLabel("Starting URL").fill("http://backend:8000/api/health?probe=1&next=/api/health");
+await page.getByLabel("Maximum depth").fill("1");
+await page.getByLabel("Maximum pages").fill("1");
+await page.getByLabel("Maximum requests").fill("1");
+await page.getByText(/http:\/\/backend:8000\/api\/health/).first().waitFor();
 await page.screenshot({
   path: resolve(screenshotDirectory, "url-scanner.png"),
   fullPage: true,
+});
+await page.getByRole("button", { name: `Review ${plannedTestsCount} previews` }).click();
+await page.getByText("Inert HTML reflection marker").waitFor();
+await page.screenshot({
+  path: resolve(screenshotDirectory, "safe-test-approval.png"),
+  fullPage: false,
 });
 
 const har = JSON.stringify({

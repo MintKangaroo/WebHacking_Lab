@@ -29,6 +29,8 @@
 | Metadata access | Explicit metadata ranges/hostnames deny policy |
 | Excessive traffic | Global rate, sequential scanner, target concurrency, job budget, cancellation |
 | Destructive mutation | Non-destructive test model and profile policy |
+| Analyzer-to-network escalation | Persisted preview, selected-ID approval, shared gateway only |
+| Redirect probe leaves scope | SAFE probes do not follow Location; crawl redirects are fully rechecked |
 | Secret leakage | Structured allowlist logging, field redaction, export redaction |
 | ZIP Slip / archive bomb | Canonical containment and extraction budgets |
 | Uploaded-code execution | No import/build/run/dependency-install path |
