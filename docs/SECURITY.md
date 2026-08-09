@@ -39,6 +39,18 @@ Scope, DNS/IP, rate, budget, timeout, size, and redaction. Unselected previews
 remain unsent. SQL extraction, timing delays, executable XSS, writes, command
 execution, credentials, and request bodies are denied.
 
+Phase 10 adds an inert source-ingestion boundary. Source files are placed under
+a server-generated UUID key, never a caller path. ZIP members are normalized
+and checked for traversal, duplicate names, links, non-regular types,
+executable bits, nested archives, declared MIME, binary headers, entry count, per-file size,
+and total expansion before atomic placement. Uploaded projects are never
+imported, interpreted, built, or used for dependency installation. Database
+records contain hashes and indexes rather than source bodies; editor responses
+are size-bounded and secret-redacted again. Project creation requires an exact
+confirmation phrase, explicit authorization, and a bounded purpose statement.
+Legacy Compose records are migrated to deny-by-default authorization and cannot
+accept another upload until permission is reconfirmed.
+
 External targets remain disabled until both process switches are explicitly
 enabled, an authorization-backed project scope exists, the workspace is
 enabled with a stated purpose, and the exact request preview is confirmed.
@@ -69,6 +81,11 @@ enabled with a stated purpose, and the exact request preview is confirmed.
   semicolons, and unsupported mutation types are rejected.
 - SAFE redirect observations do not follow `Location`; they store the first
   redacted response so an external marker cannot become an outbound request.
+- Source uploads live in the bounded artifact root. Filesystem links and
+  executable/binary inputs are rejected; unsupported text assets are not
+  presented as analyzed code.
+- Python routes are parsed with `ast`; parser failures become limitations and
+  never trigger fallback execution or imports.
 
 ## Dependency advisory note
 

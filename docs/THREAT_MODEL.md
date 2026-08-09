@@ -32,8 +32,10 @@
 | Analyzer-to-network escalation | Persisted preview, selected-ID approval, shared gateway only |
 | Redirect probe leaves scope | SAFE probes do not follow Location; crawl redirects are fully rechecked |
 | Secret leakage | Structured allowlist logging, field redaction, export redaction |
-| ZIP Slip / archive bomb | Canonical containment and extraction budgets |
+| ZIP Slip / archive bomb | Normalized relative paths, duplicate denial, entry/count/size budgets |
+| ZIP links or executable content | Reject symlink, hard link, special type, executable mode and binary headers |
 | Uploaded-code execution | No import/build/run/dependency-install path |
+| Uploaded secret disclosure | Secret-shape warning plus redaction on every code-content response |
 | Lab breakout | Internal network, non-root, dropped capabilities, limits, read-only FS |
 | Analyzer overclaim | Evidence, confidence, validation state, and limitations |
 | Execution bypass | One guarded client injected into all execution-capable services |

@@ -113,9 +113,61 @@ for (let attempt = 0; attempt < 40; attempt += 1) {
   await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
 }
 
+const codeProjectResponse = await page.request.post(`${baseURL}/api/code-projects`, {
+  data: {
+    project_id: project.id,
+    name: "Flask Storefront Source",
+    description: "Authorized CTF source reviewed without execution.",
+    authorization_confirmed: true,
+    authorization_notes: "Competition organizer authorized this exact source review.",
+    confirmation_phrase: "UPLOAD INERT SOURCE",
+  },
+});
+if (!codeProjectResponse.ok()) throw new Error(await codeProjectResponse.text());
+const codeProject = await codeProjectResponse.json();
+const source = `from flask import Flask, request
+
+app = Flask(__name__)
+API_KEY = "screenshot-demo-secret"
+
+@app.route("/product/<int:item_id>", methods=["GET"])
+@login_required
+def product(item_id):
+    query = request.args.get("q")
+    return {"item_id": item_id, "query": query}
+`;
+const codeUploadResponse = await page.request.post(`${baseURL}/api/code-projects/upload`, {
+  multipart: {
+    code_project_id: codeProject.id,
+    files: {
+      name: "app.py",
+      mimeType: "text/x-python",
+      buffer: Buffer.from(source),
+    },
+  },
+});
+if (!codeUploadResponse.ok()) throw new Error(await codeUploadResponse.text());
+const codeAnalysisResponse = await page.request.post(
+  `${baseURL}/api/code-projects/${codeProject.id}/analyze`,
+);
+if (!codeAnalysisResponse.ok()) throw new Error(await codeAnalysisResponse.text());
+
 await page.goto(`${baseURL}/`);
 await page.getByRole("heading", { name: "Security analysis, under control." }).waitFor();
 await page.screenshot({ path: resolve(screenshotDirectory, "dashboard.png"), fullPage: true });
+
+await page.goto(`${baseURL}/code-analysis`);
+await page.getByLabel("Parent project").selectOption({ label: projectName });
+await page.getByLabel("Code project").selectOption({ label: "Flask Storefront Source" });
+await page.getByText("app.py").first().waitFor();
+await page.getByText("/product/<int:item_id>").waitFor();
+await page.getByRole("button", { name: /GET.*product/ }).click();
+await page.getByText(/product · app.py:8/).waitFor();
+await page.getByText(/redacted-secret/).first().waitFor({ timeout: 15000 });
+await page.screenshot({
+  path: resolve(screenshotDirectory, "code-analysis.png"),
+  fullPage: true,
+});
 
 await page.goto(`${baseURL}/projects/${project.id}`);
 await page.getByText("Scope registry").waitFor();

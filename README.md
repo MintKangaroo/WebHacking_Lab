@@ -2,7 +2,7 @@
 
 CTF, 로컬 랩, 명시적으로 허가받은 모의해킹의 HTTP 증거를 한곳에서 분석하는 안전 중심 웹 보안 워크스페이스입니다.
 
-요청·응답 정규화, 민감정보 마스킹, Scope 관리, 제한적 외부 요청, 응답 Diff, 6개 수동 분석기, React Flow 분석 흐름과 **승인형 SAFE URL Scanner**가 실제 FastAPI 데이터로 동작합니다.
+요청·응답 정규화, 민감정보 마스킹, Scope 관리, 제한적 외부 요청, 응답 Diff, 6개 수동 분석기, React Flow 분석 흐름, **승인형 SAFE URL Scanner**와 **실행 없는 소스코드 분석**이 실제 FastAPI 데이터로 동작합니다.
 
 > 기본값은 **Analysis Only**입니다. 외부 요청은 서버 설정, 프로젝트 Scope, 권한 확인, 워크스페이스 승인, 요청별 최종 확인을 모두 통과해야 합니다.
 
@@ -19,6 +19,8 @@ CTF, 로컬 랩, 명시적으로 허가받은 모의해킹의 HTTP 증거를 한
 | Scope 기반 URL Scanner | 정확한 SAFE 요청 개별 승인 |
 | --- | --- |
 | ![Scope 기반 URL Scanner](docs/screenshots/url-scanner.png) | ![SAFE 테스트 승인](docs/screenshots/safe-test-approval.png) |
+
+![실행 없는 소스코드 분석과 Route Inventory](docs/screenshots/code-analysis.png)
 
 ## 빠른 시작
 
@@ -125,6 +127,17 @@ Scanner가 자동으로 확인하는 범위:
 
 `PASSIVE`는 GET 기반 수집만 합니다. `SAFE`는 수집 후 최대 10개의 낮은 위험 테스트를 Preview로 만들며, 사용자가 개별 승인하기 전에는 한 건도 보내지 않습니다. 현재 SAFE 플러그인은 SQL 오류·숫자형 boolean 차이, 실행 불가능한 XSS 반사 marker, 따라가지 않는 예약 도메인 redirect, 단일 CORS OPTIONS 관찰을 지원합니다. 시간 지연, 데이터 추출, 파일/DB 쓰기, 명령 실행, JavaScript 실행, 로그인 자동화는 비활성화되어 있습니다.
 
+### 4. 소스코드를 실행하지 않고 구조 분석하기
+
+1. 좌측 **Code Analysis**를 엽니다.
+2. 상위 프로젝트를 고르고 분석 이름과 권한 있는 검토 목적을 입력합니다.
+3. 여러 소스 파일 또는 ZIP 하나를 선택하고 권한 확인란을 선택합니다.
+4. **Validate & index**를 누르면 ZIP/파일 안전 검사 후 텍스트 파일만 인덱싱됩니다.
+5. 파일 트리에서 마스킹된 코드를 읽고 **Analyze routes**를 누릅니다.
+6. Route Inventory에서 endpoint를 선택하면 Monaco Editor가 연결된 파일과 라인으로 이동합니다.
+
+업로드한 코드는 import, 실행, build되지 않으며 dependency install도 수행하지 않습니다. ZIP Slip, symbolic/hard link, 실행 비트·실행 파일, 중첩 압축, 확장자/MIME과 바이너리 header, 파일 수, 개별/전체 크기를 검사합니다. 원본 파일은 UUID 아티팩트 디렉터리에 저장되고 DB에는 파일 해시와 인덱스만 저장합니다. API Key, token, password, private key 형태는 Editor 응답에서 마스킹됩니다.
+
 ## 현재 기능
 
 - 프로젝트, 워크스페이스, 요청 예산, optimistic locking
@@ -144,6 +157,10 @@ Scanner가 자동으로 확인하는 범위:
 - 기존 6개 분석기를 재사용하는 URL별 Passive Finding
 - 정확한 SAFE 요청 Preview, 개별 선택 승인, runtime evidence와 상태 구분
 - SQL 오류·boolean, inert XSS reflection, open redirect, CORS SAFE 플러그인
+- 안전한 단일/다중 소스 및 ZIP 업로드, UUID 기반 아티팩트 저장
+- 언어·프레임워크·dependency manifest 탐지와 파일 인벤토리
+- Python AST 기반 Flask/FastAPI 스타일 Route와 request parameter 추출
+- Plain PHP 파일 경로 endpoint 추정, 마스킹된 Monaco 코드 뷰어
 - 스캔 응답 크기 제한을 스트리밍 다운로드 단계에서 강제
 - SQLite 기본, PostgreSQL 선택 지원, Alembic migration
 - non-root/read-only Docker 런타임과 GitHub Actions
@@ -159,6 +176,7 @@ flowchart TD
     API --> HC[DNS-pinned HTTP Client]
     API --> AN[Passive Analysis Engine]
     API --> SC[PASSIVE / SAFE URL Scanner]
+    API --> SA[Inert Source Analysis]
     SC --> TP[Test Preview + Approval]
     API --> DF[Diff Engine]
     API --> AU[Audit Log]
@@ -167,6 +185,7 @@ flowchart TD
     RL --> HC
     SC --> RL
     TP --> RL
+    SA --> AS[(Bounded Artifact Store)]
     HC --> RG[Redirect Revalidation]
     RG --> RD[Response Limit + Redaction]
     RD --> DB
@@ -215,6 +234,12 @@ GET    /api/scans/{scan_id}/findings
 GET    /api/scans/{scan_id}/events
 GET    /api/scans/{scan_id}/tests
 POST   /api/scans/{scan_id}/approve-tests
+POST   /api/code-projects
+POST   /api/code-projects/upload
+GET    /api/code-projects/{code_project_id}/files
+GET    /api/code-projects/{code_project_id}/routes
+POST   /api/code-projects/{code_project_id}/analyze
+GET    /api/code-projects/{code_project_id}/analysis
 GET    /api/audit-events
 ```
 
@@ -254,7 +279,7 @@ npx playwright install chromium
 PLAYWRIGHT_BASE_URL=http://127.0.0.1:8080 npm run e2e
 ```
 
-현재 Backend 90개, Frontend 10개 unit/integration, Playwright 핵심 E2E를 포함합니다. 자동 테스트는 fake DNS/transport 또는 로컬 컨테이너만 사용하며 실제 외부 서비스에 요청하지 않습니다.
+현재 Backend 111개, Frontend 12개 unit/integration, Playwright 핵심 E2E를 포함합니다. 자동 테스트는 fake DNS/transport, 임시 업로드 디렉터리 또는 로컬 컨테이너만 사용하며 실제 외부 서비스에 요청하지 않습니다.
 
 ## 환경 변수
 
@@ -269,6 +294,11 @@ PLAYWRIGHT_BASE_URL=http://127.0.0.1:8080 npm run e2e
 | `WEBHACKING_MAX_REQUEST_BYTES` | `1048576` | 저장 요청 body 상한 |
 | `WEBHACKING_MAX_RESPONSE_BYTES` | `2097152` | 스트리밍 다운로드 응답 상한 |
 | `WEBHACKING_MAX_HAR_BYTES` | `10485760` | HAR 입력 상한 |
+| `WEBHACKING_CODE_UPLOAD_ROOT` | `./data/code_uploads` | UUID 기반 소스 아티팩트 루트 |
+| `WEBHACKING_MAX_CODE_ARCHIVE_BYTES` | `50000000` | ZIP 업로드 크기 상한 |
+| `WEBHACKING_MAX_CODE_EXTRACTED_BYTES` | `200000000` | 해제된 프로젝트 전체 크기 상한 |
+| `WEBHACKING_MAX_CODE_FILES` | `5000` | 업로드 프로젝트 파일 수 상한 |
+| `WEBHACKING_MAX_CODE_SINGLE_FILE_BYTES` | `5000000` | 단일 소스 파일 크기 상한 |
 
 전체 예시는 [.env.example](.env.example)에 있습니다.
 
@@ -280,10 +310,11 @@ PLAYWRIGHT_BASE_URL=http://127.0.0.1:8080 npm run e2e
 
 ## 현재 제한과 로드맵
 
-현재 구현 범위는 Foundation, HTTP Workspace, 제한적 외부 Repeater, Diff, Passive Analysis, React Flow 기초, Phase 8 URL Scanner와 Phase 9 승인형 SAFE Scanner입니다.
+현재 구현 범위는 Foundation, HTTP Workspace, 제한적 외부 Repeater, Diff, Passive Analysis, React Flow 기초, Phase 8 URL Scanner, Phase 9 승인형 SAFE Scanner와 Phase 10 Source Upload Foundation입니다.
 
 - URL crawler는 PASSIVE와 SAFE를 지원합니다. CTF/LOCAL_LAB 프로필, 제한적 timing test와 extraction은 아직 비활성화되어 있습니다.
-- Source ZIP 업로드와 AST taint analysis는 아직 없습니다.
+- Source-to-Sink taint, 상세 PHP Source/Sink와 remediation diff는 Phase 11 범위입니다.
+- Express/FastAPI/Django/Laravel/Spring 심화 규칙과 Hybrid verification은 후속 Phase 범위입니다.
 - CTF Workspace, Encoding Workbench, 5개 격리 Lab, Finding/Report는 후속 Phase입니다.
 - 저장된 인증정보는 의도적으로 실행에 재사용하지 않아 로그인 세션 크롤링은 지원하지 않습니다.
 - 프로세스 내 rate limiter는 단일 인스턴스 기준이며 다중 replica 전역 한도는 향후 공유 저장소가 필요합니다.

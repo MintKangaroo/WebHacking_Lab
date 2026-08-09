@@ -10,12 +10,12 @@ The application is a React single-page client backed by a typed FastAPI API.
 SQLAlchemy repositories own persistence, domain services own state transitions,
 and routers only translate transport models.
 
-## Current Phase 9 components
+## Current Phase 10 components
 
 | Component | Responsibility |
 | --- | --- |
-| React workspace | Overview, Projects, Scope approval, Repeater, Diff, Analyzer Flow, URL Scanner |
-| FastAPI routers | System, project, workspace, scope, HTTP, execution, analysis, scan, audit |
+| React workspace | Overview, Projects, Scope approval, Repeater, Analyzer Flow, URL Scanner, Code Analysis |
+| FastAPI routers | System, project, workspace, scope, HTTP, execution, analysis, scan, source, audit |
 | Settings | Validated limits and safe-off execution defaults |
 | Domain services | Project state, authorization, execution policy, analysis snapshots |
 | Scope Guard | URL, scheme, authority, DNS/IP, target, port, and path decisions |
@@ -26,6 +26,7 @@ and routers only translate transport models.
 | Diff engine | Dynamic normalization plus JSON, HTML, header, timing comparisons |
 | Analysis engine | Six passive plugins with evidence, confidence, tests, limitations |
 | Scanner engine | Cancellable crawl, inventories, exact SAFE previews and evidence evaluation |
+| Source boundary | Guarded ZIP/files, artifact index, project detector, AST routes, redacted viewer |
 | Database | Async repositories, SQLite/PostgreSQL models, Alembic revisions |
 | Request context | Correlation IDs and structured lifecycle logging |
 | Containers | Non-root runtime, reduced capabilities, health checks |
@@ -114,12 +115,19 @@ flowchart LR
 
 Uploaded code is never imported, interpreted, built, or executed. Dependency
 installation is forbidden. Archive extraction uses a temporary isolated
-directory, canonical path containment, file/count/size/depth budgets, and link
-rejection. Secrets are displayed only in redacted form.
+directory, normalized relative paths, file/count/size budgets, binary and
+executable denial, nested-archive denial, and symbolic/hard-link rejection.
+Accepted trees move atomically under a server-generated UUID. Secrets are
+displayed only in redacted, size-bounded form.
 
-Language rules produce sources, transformations, sanitizers, sinks, and trace
-gaps. Static candidates are not upgraded to runtime-confirmed findings without
-evidence from the guarded execution path.
+Phase 10 implements language/framework detection, file indexing, Python AST
+decorator routes, conservative Plain PHP file endpoints, parameter inventory,
+and the Monaco route-to-line view. Source/Sink extraction, taint propagation,
+data-flow graphs, and remediation diffs remain Phase 11 work.
+
+Future language rules produce sources, transformations, sanitizers, sinks, and
+trace gaps. Static candidates will not be upgraded to runtime-confirmed
+findings without evidence from the guarded execution path.
 
 ## Hybrid analysis
 
@@ -141,8 +149,8 @@ flowchart LR
 
 ## Data storage
 
-SQLite is the local default; PostgreSQL is optional. Large request, response,
-and source artifacts will use a bounded artifact store rather than inline
-database blobs. Credentials, cookies, authorization headers, API keys, and
+SQLite is the local default; PostgreSQL is optional. Source bodies use a bounded
+artifact store rather than inline database blobs; large HTTP artifact migration
+remains planned. Credentials, cookies, authorization headers, API keys, and
 session values are encrypted where persistence is required and redacted in
 logs, UI payloads, reports, and audit metadata.

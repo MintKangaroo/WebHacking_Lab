@@ -101,6 +101,42 @@ Content-Type: application/json
 
 선택한 Preview만 각각 한 요청으로 실행됩니다. `ctf`, `local_lab`, browser JavaScript, limited timing과 extraction은 아직 차단됩니다. 외부 호스트는 권한 확인이 저장된 Scope 안에 있어야 합니다. Crawl redirect는 매 hop을 재검사하고, SAFE 관찰 요청은 redirect를 따라가지 않은 채 첫 응답 증거만 저장합니다.
 
+## Source Code Analysis
+
+소스 프로젝트를 만든 뒤 여러 일반 파일 또는 ZIP 하나를 multipart로 업로드합니다. 서버는 코드를 실행하거나 dependency를 설치하지 않습니다.
+
+```http
+POST /api/code-projects
+Content-Type: application/json
+
+{
+  "project_id": "<authorized project uuid>",
+  "name": "Flask challenge source",
+  "description": "Authorized static review",
+  "authorization_confirmed": true,
+  "authorization_notes": "Organizer approved this exact source review scope.",
+  "confirmation_phrase": "UPLOAD INERT SOURCE"
+}
+```
+
+```bash
+curl -X POST http://localhost:8080/api/code-projects/upload \
+  -F 'code_project_id=<code project uuid>' \
+  -F 'files=@challenge.zip;type=application/zip'
+```
+
+```text
+GET  /api/code-projects?project_id=<uuid>
+GET  /api/code-projects/{id}
+GET  /api/code-projects/{id}/files
+GET  /api/code-projects/{id}/files/{file_id}
+POST /api/code-projects/{id}/analyze
+GET  /api/code-projects/{id}/analysis
+GET  /api/code-projects/{id}/routes
+```
+
+파일 본문 API는 500KB까지만 표시하며 비밀값을 다시 마스킹합니다. 업로드 응답의 `execution_performed`는 항상 `false`입니다. Phase 10 Route 분석은 Python AST decorator와 보수적인 Plain PHP 파일 endpoint에 한정되며, 동적 라우팅과 middleware는 제한 사항으로 표시합니다.
+
 ## 분석
 
 ```http
@@ -134,9 +170,12 @@ Diff는 status, multivalue header, cookie, body similarity, JSON path, HTML text
 
 | HTTP | code | 의미 |
 | --- | --- | --- |
+| 403 | `authorization_required` | 저장된 소스 검토 권한 증거가 없거나 업그레이드 후 재확인 필요 |
 | 403 | `execution_blocked` | 전역/워크스페이스/메서드/Scope 정책 차단 |
 | 409 | `conflict` | preview 또는 entity version이 오래됨 |
 | 413 | `response_too_large` | 응답 상한 초과 |
+| 413 | `source_upload_too_large` | 소스/ZIP/해제 크기 또는 파일 수 상한 초과 |
+| 422 | `invalid_source_upload` | ZIP 경로·링크·실행 파일·바이너리 등 업로드 정책 위반 |
 | 429 | `rate_limited` | 전역/대상 rate 또는 concurrency 초과 |
 | 502 | `upstream_request_failed` | timeout, TLS, 연결 오류 등 안전한 upstream 실패 |
 
