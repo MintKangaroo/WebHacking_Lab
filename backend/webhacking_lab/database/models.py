@@ -24,6 +24,7 @@ from webhacking_lab.domain.enums import (
     ActiveTestStatus,
     AnalysisMode,
     AuditEventType,
+    CodeProjectStatus,
     ScannerProfile,
     ScanStatus,
     WorkspaceMode,
@@ -59,6 +60,10 @@ class Project(TimestampedUuidMixin, VersionedEntityMixin, Base):
         cascade="all, delete-orphan",
     )
     scope_rules: Mapped[list["ScopeRule"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    code_projects: Mapped[list["CodeProject"]] = relationship(
         back_populates="project",
         cascade="all, delete-orphan",
     )
@@ -420,6 +425,94 @@ class ScanEvent(TimestampedUuidMixin, Base):
     details_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
     scan: Mapped[ScanJob] = relationship(back_populates="events")
+
+
+class CodeProject(TimestampedUuidMixin, VersionedEntityMixin, Base):
+    """Metadata for an inert source tree stored outside the relational database."""
+
+    __tablename__ = "code_projects"
+
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(160))
+    description: Mapped[str] = mapped_column(Text, default="")
+    authorization_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+    authorization_notes: Mapped[str] = mapped_column(Text)
+    status: Mapped[CodeProjectStatus] = mapped_column(
+        Enum(CodeProjectStatus, native_enum=False, length=24),
+        default=CodeProjectStatus.EMPTY,
+        index=True,
+    )
+    storage_key: Mapped[str] = mapped_column(String(36), unique=True)
+    languages_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    frameworks_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    dependency_files_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    warnings_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    total_files: Mapped[int] = mapped_column(Integer, default=0)
+    total_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    secret_findings_count: Mapped[int] = mapped_column(Integer, default=0)
+    analyzed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    project: Mapped[Project] = relationship(back_populates="code_projects")
+    files: Mapped[list["CodeFile"]] = relationship(
+        back_populates="code_project",
+        cascade="all, delete-orphan",
+    )
+    routes: Mapped[list["StaticRouteRecord"]] = relationship(
+        back_populates="code_project",
+        cascade="all, delete-orphan",
+    )
+
+
+class CodeFile(TimestampedUuidMixin, Base):
+    """Indexed metadata for one regular text file in an uploaded source tree."""
+
+    __tablename__ = "code_files"
+    __table_args__ = (
+        UniqueConstraint("code_project_id", "relative_path", name="uq_code_file_path"),
+    )
+
+    code_project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("code_projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    relative_path: Mapped[str] = mapped_column(String(1024))
+    language: Mapped[str] = mapped_column(String(40), default="text")
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64))
+    secret_findings_count: Mapped[int] = mapped_column(Integer, default=0)
+    warning_codes_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    route_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    code_project: Mapped[CodeProject] = relationship(back_populates="files")
+
+
+class StaticRouteRecord(TimestampedUuidMixin, Base):
+    """Framework route or conservative file-based endpoint extracted without execution."""
+
+    __tablename__ = "static_routes"
+
+    code_project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("code_projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    code_file_id: Mapped[UUID] = mapped_column(
+        ForeignKey("code_files.id", ondelete="CASCADE"),
+        index=True,
+    )
+    framework: Mapped[str] = mapped_column(String(60))
+    methods_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    path: Mapped[str] = mapped_column(String(1024))
+    handler_name: Mapped[str] = mapped_column(String(300))
+    line_start: Mapped[int] = mapped_column(Integer)
+    line_end: Mapped[int] = mapped_column(Integer)
+    parameters_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    authentication_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    findings_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+    code_project: Mapped[CodeProject] = relationship(back_populates="routes")
 
 
 class AuditEvent(TimestampedUuidMixin, Base):

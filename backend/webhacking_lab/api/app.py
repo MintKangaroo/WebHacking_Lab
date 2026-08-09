@@ -14,6 +14,7 @@ from webhacking_lab import __version__
 from webhacking_lab.api.errors import install_error_handlers
 from webhacking_lab.api.routers.analysis import router as analysis_router
 from webhacking_lab.api.routers.audit import router as audit_router
+from webhacking_lab.api.routers.code_projects import router as code_projects_router
 from webhacking_lab.api.routers.http_requests import router as http_requests_router
 from webhacking_lab.api.routers.projects import router as projects_router
 from webhacking_lab.api.routers.scans import router as scans_router
@@ -115,6 +116,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(audit_router, prefix="/api")
     application.include_router(analysis_router, prefix="/api")
     application.include_router(scans_router, prefix="/api")
+    application.include_router(code_projects_router, prefix="/api")
     install_error_handlers(application)
     return application
 

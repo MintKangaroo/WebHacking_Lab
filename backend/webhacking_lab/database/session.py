@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+from sqlalchemy import Connection, inspect
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -27,9 +28,10 @@ class Database:
         )
 
     async def initialize(self) -> None:
-        """Create currently registered tables."""
+        """Create tables and bridge legacy Compose schemas without deleting data."""
 
         async with self.engine.begin() as connection:
+            await connection.run_sync(_bridge_legacy_code_project_authorization)
             await connection.run_sync(Base.metadata.create_all)
 
     async def close(self) -> None:
@@ -59,3 +61,21 @@ def ensure_sqlite_directory(settings: Settings) -> None:
     if path_value == ":memory:":
         return
     Path(path_value).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
+
+
+def _bridge_legacy_code_project_authorization(connection: Connection) -> None:
+    """Add Phase 10 authorization columns to databases created before Alembic startup."""
+
+    inspector = inspect(connection)
+    if "code_projects" not in inspector.get_table_names():
+        return
+    columns = {str(column["name"]) for column in inspector.get_columns("code_projects")}
+    if "authorization_confirmed" not in columns:
+        connection.exec_driver_sql(
+            "ALTER TABLE code_projects ADD COLUMN "
+            "authorization_confirmed BOOLEAN NOT NULL DEFAULT FALSE"
+        )
+    if "authorization_notes" not in columns:
+        connection.exec_driver_sql(
+            "ALTER TABLE code_projects ADD COLUMN authorization_notes TEXT NOT NULL DEFAULT ''"
+        )

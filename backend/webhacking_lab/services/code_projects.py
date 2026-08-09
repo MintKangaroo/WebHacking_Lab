@@ -1,0 +1,394 @@
+"""Source upload, indexing, redacted viewing, and route inventory orchestration."""
+
+import asyncio
+from datetime import UTC, datetime
+from pathlib import Path
+from uuid import UUID, uuid4
+
+from fastapi import UploadFile
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from webhacking_lab.core.config import Settings
+from webhacking_lab.database.models import CodeFile, CodeProject, StaticRouteRecord
+from webhacking_lab.database.repositories.audit import AuditRepository
+from webhacking_lab.database.repositories.code_projects import CodeProjectRepository
+from webhacking_lab.database.repositories.projects import ProjectRepository
+from webhacking_lab.domain.enums import AuditEventType, CodeProjectStatus
+from webhacking_lab.domain.exceptions import (
+    AuthorizationRequiredError,
+    ConflictError,
+    EntityNotFoundError,
+    UploadLimitError,
+    UploadValidationError,
+)
+from webhacking_lab.static_analysis.archive import SecureUploadStore
+from webhacking_lab.static_analysis.file_index import index_source_tree
+from webhacking_lab.static_analysis.models import (
+    AuthenticationInfo,
+    CodeAnalysisRead,
+    CodeFileContentRead,
+    CodeFileRead,
+    CodeProjectCreate,
+    CodeProjectRead,
+    CodeUploadRead,
+    IndexedFile,
+    StaticParameter,
+    StaticRoute,
+    UploadPolicy,
+)
+from webhacking_lab.static_analysis.project_detector import detect_project
+from webhacking_lab.static_analysis.route_extractor import extract_routes
+from webhacking_lab.static_analysis.secret_scanner import redact_source
+
+MAX_EDITOR_BYTES = 500_000
+
+
+def _upload_policy(settings: Settings) -> UploadPolicy:
+    return UploadPolicy(
+        max_archive_bytes=settings.max_code_archive_bytes,
+        max_extracted_bytes=settings.max_code_extracted_bytes,
+        max_files=settings.max_code_files,
+        max_single_file_bytes=settings.max_code_single_file_bytes,
+        max_archive_depth=settings.max_code_archive_depth,
+    )
+
+
+def _project_read(project: CodeProject) -> CodeProjectRead:
+    return CodeProjectRead(
+        id=project.id,
+        project_id=project.project_id,
+        name=project.name,
+        description=project.description,
+        authorization_confirmed=project.authorization_confirmed,
+        authorization_notes=project.authorization_notes,
+        status=project.status,
+        languages=project.languages_json,
+        frameworks=project.frameworks_json,
+        dependency_files=project.dependency_files_json,
+        warnings=project.warnings_json,
+        total_files=project.total_files,
+        total_bytes=project.total_bytes,
+        secret_findings_count=project.secret_findings_count,
+        analyzed_at=project.analyzed_at,
+        created_at=project.created_at,
+        updated_at=project.updated_at,
+    )
+
+
+def _file_read(file: CodeFile) -> CodeFileRead:
+    return CodeFileRead(
+        id=file.id,
+        relative_path=file.relative_path,
+        language=file.language,
+        size_bytes=file.size_bytes,
+        sha256=file.sha256,
+        secret_findings_count=file.secret_findings_count,
+        warning_codes=file.warning_codes_json,
+        route_count=file.route_count,
+    )
+
+
+def _route_read(route: StaticRouteRecord, file_path: str) -> StaticRoute:
+    return StaticRoute(
+        id=route.id,
+        code_file_id=route.code_file_id,
+        framework=route.framework,
+        methods=route.methods_json,
+        path=route.path,
+        handler_name=route.handler_name,
+        file_path=file_path,
+        line_start=route.line_start,
+        line_end=route.line_end,
+        parameters=[StaticParameter.model_validate(value) for value in route.parameters_json],
+        authentication=AuthenticationInfo.model_validate(route.authentication_json),
+        findings=route.findings_json,
+    )
+
+
+class CodeProjectService:
+    """Apply one policy to source artifacts from upload through display."""
+
+    def __init__(self, session: AsyncSession, settings: Settings) -> None:
+        self._session = session
+        self._settings = settings
+        self._projects = ProjectRepository(session)
+        self._codes = CodeProjectRepository(session)
+        self._audit = AuditRepository(session)
+        self._policy = _upload_policy(settings)
+        self._store = SecureUploadStore(Path(settings.code_upload_root), self._policy)
+
+    async def create(
+        self,
+        data: CodeProjectCreate,
+        correlation_id: str | None,
+    ) -> CodeProjectRead:
+        """Create metadata only; no path supplied by the caller becomes a storage path."""
+
+        if await self._projects.get(data.project_id) is None:
+            raise EntityNotFoundError("Parent project was not found")
+        project = await self._codes.add(
+            CodeProject(
+                project_id=data.project_id,
+                name=data.name.strip(),
+                description=data.description.strip(),
+                authorization_confirmed=True,
+                authorization_notes=data.authorization_notes.strip(),
+                status=CodeProjectStatus.EMPTY,
+                storage_key=str(uuid4()),
+            )
+        )
+        await self._audit.record(
+            AuditEventType.CODE_PROJECT_CREATED,
+            resource_type="code_project",
+            resource_id=project.id,
+            project_id=project.project_id,
+            correlation_id=correlation_id,
+            details={"name": project.name, "authorization_notes": project.authorization_notes},
+        )
+        await self._session.commit()
+        return _project_read(project)
+
+    async def list_projects(self, project_id: UUID | None = None) -> list[CodeProjectRead]:
+        return [_project_read(value) for value in await self._codes.list_projects(project_id)]
+
+    async def get(self, code_project_id: UUID) -> CodeProjectRead:
+        project = await self._require_project(code_project_id)
+        return _project_read(project)
+
+    async def upload(
+        self,
+        code_project_id: UUID,
+        files: list[UploadFile],
+        correlation_id: str | None,
+    ) -> CodeUploadRead:
+        """Stage untrusted files, index inert text, then commit artifact metadata."""
+
+        project = await self._require_project(code_project_id)
+        if not project.authorization_confirmed:
+            await self._audit.record(
+                AuditEventType.CODE_PROJECT_UPLOAD_BLOCKED,
+                resource_type="code_project",
+                resource_id=project.id,
+                project_id=project.project_id,
+                correlation_id=correlation_id,
+                details={"reason": "authorization_required", "code_executed": False},
+            )
+            await self._session.commit()
+            raise AuthorizationRequiredError(
+                "Source authorization must be reconfirmed before uploading files"
+            )
+        if project.status != CodeProjectStatus.EMPTY or project.files:
+            raise ConflictError("This code project already contains an immutable upload")
+        try:
+            root = await self._store.ingest(files, project.storage_key)
+            indexed, index_warnings = await asyncio.to_thread(
+                index_source_tree,
+                root,
+                self._policy,
+            )
+            if not indexed:
+                raise UploadValidationError("No supported source or configuration files were found")
+            detection = await asyncio.to_thread(detect_project, root, indexed)
+            records = [
+                await self._codes.add_file(
+                    CodeFile(
+                        code_project_id=project.id,
+                        relative_path=entry.relative_path,
+                        language=entry.language,
+                        size_bytes=entry.size_bytes,
+                        sha256=entry.sha256,
+                        secret_findings_count=len(entry.secret_findings),
+                        warning_codes_json=entry.warning_codes,
+                    )
+                )
+                for entry in indexed
+            ]
+            project.status = CodeProjectStatus.INDEXED
+            project.languages_json = detection.languages
+            project.frameworks_json = detection.frameworks
+            project.dependency_files_json = detection.dependency_files
+            project.warnings_json = sorted({*index_warnings, *detection.warnings})[:100]
+            project.total_files = len(indexed)
+            project.total_bytes = sum(item.size_bytes for item in indexed)
+            project.secret_findings_count = sum(len(item.secret_findings) for item in indexed)
+            project.version += 1
+            await self._audit.record(
+                AuditEventType.CODE_PROJECT_UPLOAD_ACCEPTED,
+                resource_type="code_project",
+                resource_id=project.id,
+                project_id=project.project_id,
+                correlation_id=correlation_id,
+                details={
+                    "file_count": project.total_files,
+                    "total_bytes": project.total_bytes,
+                    "secret_findings": project.secret_findings_count,
+                    "code_executed": False,
+                },
+            )
+            await self._session.commit()
+            await self._session.refresh(project)
+            return CodeUploadRead(
+                project=_project_read(project),
+                files=[_file_read(value) for value in records],
+                policy=self._policy,
+            )
+        except (UploadValidationError, UploadLimitError) as error:
+            self._store.delete(project.storage_key)
+            await self._session.rollback()
+            project = await self._require_project(code_project_id)
+            await self._audit.record(
+                AuditEventType.CODE_PROJECT_UPLOAD_BLOCKED,
+                resource_type="code_project",
+                resource_id=project.id,
+                project_id=project.project_id,
+                correlation_id=correlation_id,
+                details={"reason": str(error), "code_executed": False},
+            )
+            await self._session.commit()
+            raise
+        except Exception:
+            self._store.delete(project.storage_key)
+            await self._session.rollback()
+            raise
+
+    async def files(self, code_project_id: UUID) -> list[CodeFileRead]:
+        await self._require_project(code_project_id)
+        return [_file_read(value) for value in await self._codes.list_files(code_project_id)]
+
+    async def file_content(
+        self,
+        code_project_id: UUID,
+        file_id: UUID,
+    ) -> CodeFileContentRead:
+        project = await self._require_project(code_project_id)
+        file = await self._codes.get_file(file_id)
+        if file is None or file.code_project_id != project.id:
+            raise EntityNotFoundError("Code file was not found")
+        root = self._store.resolve(project.storage_key)
+        path = (root / file.relative_path).resolve()
+        if not path.is_relative_to(root) or not path.is_file() or path.is_symlink():
+            raise UploadValidationError("Indexed source path failed its storage check")
+        raw = await asyncio.to_thread(path.read_bytes)
+        truncated = len(raw) > MAX_EDITOR_BYTES
+        content = raw[:MAX_EDITOR_BYTES].decode("utf-8", errors="replace")
+        rendered, redacted = redact_source(content)
+        return CodeFileContentRead(
+            **_file_read(file).model_dump(),
+            content=rendered,
+            redacted=redacted,
+            truncated=truncated,
+        )
+
+    async def analyze(
+        self,
+        code_project_id: UUID,
+        correlation_id: str | None,
+    ) -> CodeAnalysisRead:
+        """Parse routes only; uploaded code and dependencies are never run."""
+
+        project = await self._require_project(code_project_id)
+        if project.status == CodeProjectStatus.EMPTY:
+            raise ConflictError("Upload source files before analysis")
+        project.status = CodeProjectStatus.ANALYZING
+        await self._session.commit()
+        try:
+            records = await self._codes.list_files(project.id)
+            indexed = [
+                IndexedFile(
+                    relative_path=value.relative_path,
+                    language=value.language,
+                    size_bytes=value.size_bytes,
+                    sha256=value.sha256,
+                    secret_findings=[],
+                    warning_codes=value.warning_codes_json,
+                )
+                for value in records
+            ]
+            root = self._store.resolve(project.storage_key)
+            extraction = await asyncio.to_thread(
+                extract_routes,
+                root,
+                indexed,
+                project.frameworks_json,
+            )
+            by_path = {value.relative_path: value for value in records}
+            for value in records:
+                value.route_count = 0
+            route_records: list[StaticRouteRecord] = []
+            for route in extraction.routes:
+                file = by_path[route.file_path]
+                file.route_count += 1
+                route_records.append(
+                    StaticRouteRecord(
+                        code_project_id=project.id,
+                        code_file_id=file.id,
+                        framework=route.framework,
+                        methods_json=route.methods,
+                        path=route.path,
+                        handler_name=route.handler_name,
+                        line_start=route.line_start,
+                        line_end=route.line_end,
+                        parameters_json=[
+                            value.model_dump(mode="json") for value in route.parameters
+                        ],
+                        authentication_json=route.authentication.model_dump(mode="json"),
+                        findings_json=route.findings,
+                    )
+                )
+            await self._codes.replace_routes(project.id, route_records)
+            project.status = CodeProjectStatus.COMPLETED
+            project.analyzed_at = datetime.now(UTC)
+            project.warnings_json = sorted({*project.warnings_json, *extraction.warnings})[:100]
+            project.version += 1
+            await self._audit.record(
+                AuditEventType.CODE_PROJECT_ANALYZED,
+                resource_type="code_project",
+                resource_id=project.id,
+                project_id=project.project_id,
+                correlation_id=correlation_id,
+                details={"routes": len(route_records), "code_executed": False},
+            )
+            await self._session.commit()
+            return await self.analysis(code_project_id)
+        except Exception:
+            await self._session.rollback()
+            project = await self._require_project(code_project_id)
+            project.status = CodeProjectStatus.FAILED
+            await self._session.commit()
+            raise
+
+    async def routes(self, code_project_id: UUID) -> list[StaticRoute]:
+        project = await self._require_project(code_project_id)
+        files = {value.id: value.relative_path for value in project.files}
+        return [
+            _route_read(value, files.get(value.code_file_id, "unavailable"))
+            for value in await self._codes.list_routes(code_project_id)
+        ]
+
+    async def analysis(self, code_project_id: UUID) -> CodeAnalysisRead:
+        project = await self._require_project(code_project_id)
+        routes = await self.routes(code_project_id)
+        log = [
+            "Upload treated as untrusted input; no code or dependency was executed.",
+            f"Indexed {project.total_files} supported text files ({project.total_bytes} bytes).",
+            "Detected "
+            f"{len(project.frameworks_json)} framework signal(s) and {len(routes)} route(s).",
+        ]
+        return CodeAnalysisRead(
+            project=_project_read(project),
+            routes=routes,
+            analysis_log=log,
+            limitations=[
+                "Phase 10 extracts Python decorator routes and conservative Plain PHP "
+                "file endpoints.",
+                "Dynamic route construction, included routers, and middleware can require "
+                "manual review.",
+                "Source-to-Sink and taint analysis are introduced in Phase 11.",
+            ],
+        )
+
+    async def _require_project(self, code_project_id: UUID) -> CodeProject:
+        project = await self._codes.get(code_project_id)
+        if project is None:
+            raise EntityNotFoundError("Code project was not found")
+        return project

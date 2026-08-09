@@ -43,6 +43,13 @@ class ExecutionPolicyError(DomainError):
     status_code = 403
 
 
+class AuthorizationRequiredError(DomainError):
+    """Raised when an operation lacks a persisted explicit-authorization record."""
+
+    code = "authorization_required"
+    status_code = 403
+
+
 class RateLimitError(DomainError):
     """Raised when a global or target request limit is exhausted."""
 
@@ -61,4 +68,18 @@ class ResponseLimitError(DomainError):
     """Raised when an upstream response exceeds its configured byte limit."""
 
     code = "response_too_large"
+    status_code = 413
+
+
+class UploadValidationError(DomainError):
+    """Raised when an untrusted source upload violates its inert-storage policy."""
+
+    code = "invalid_source_upload"
+    status_code = 422
+
+
+class UploadLimitError(DomainError):
+    """Raised when an uploaded archive or source tree exceeds a hard ceiling."""
+
+    code = "source_upload_too_large"
     status_code = 413

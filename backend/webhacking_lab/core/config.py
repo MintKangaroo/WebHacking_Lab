@@ -37,6 +37,24 @@ class Settings(BaseSettings):
     max_response_bytes: int = Field(default=2 * 1024 * 1024, ge=1024, le=10 * 1024 * 1024)
     max_har_bytes: int = Field(default=10 * 1024 * 1024, ge=1024, le=50 * 1024 * 1024)
     max_har_entries: int = Field(default=100, ge=1, le=500)
+    code_upload_root: str = "./data/code_uploads"
+    max_code_archive_bytes: int = Field(
+        default=50_000_000,
+        ge=1024,
+        le=100_000_000,
+    )
+    max_code_extracted_bytes: int = Field(
+        default=200_000_000,
+        ge=1024,
+        le=500_000_000,
+    )
+    max_code_files: int = Field(default=5_000, ge=1, le=10_000)
+    max_code_single_file_bytes: int = Field(
+        default=5_000_000,
+        ge=256,
+        le=10_000_000,
+    )
+    max_code_archive_depth: int = Field(default=2, ge=0, le=3)
 
 
 @lru_cache(maxsize=1)

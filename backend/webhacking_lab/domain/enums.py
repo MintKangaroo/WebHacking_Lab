@@ -59,6 +59,16 @@ class ActiveTestStatus(StrEnum):
     BLOCKED = "blocked"
 
 
+class CodeProjectStatus(StrEnum):
+    """Lifecycle for an inert, uploaded source tree."""
+
+    EMPTY = "empty"
+    INDEXED = "indexed"
+    ANALYZING = "analyzing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class AuditEventType(StrEnum):
     """Auditable state changes."""
 
@@ -93,6 +103,10 @@ class AuditEventType(StrEnum):
     SCAN_TEST_STARTED = "scan.test_started"
     SCAN_TEST_COMPLETED = "scan.test_completed"
     SCAN_TEST_BLOCKED = "scan.test_blocked"
+    CODE_PROJECT_CREATED = "code_project.created"
+    CODE_PROJECT_UPLOAD_ACCEPTED = "code_project.upload_accepted"
+    CODE_PROJECT_UPLOAD_BLOCKED = "code_project.upload_blocked"
+    CODE_PROJECT_ANALYZED = "code_project.analyzed"
 
 
 class VulnerabilityCategory(StrEnum):
