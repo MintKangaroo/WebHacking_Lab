@@ -1,5 +1,6 @@
 export type WorkspaceMode = "ctf" | "authorized_pentest" | "local_lab";
 export type AnalysisMode = "manual_http" | "url_scan" | "source_code" | "hybrid";
+export type CodeProjectStatus = "empty" | "indexed" | "analyzing" | "completed" | "failed";
 
 export type NameValue = {
   name: string;
@@ -279,6 +280,88 @@ export type ScanEvent = {
   message: string;
   details: Record<string, unknown>;
   created_at: string;
+};
+
+export type CodeProject = {
+  id: string;
+  project_id: string;
+  name: string;
+  description: string;
+  authorization_confirmed: boolean;
+  authorization_notes: string;
+  status: CodeProjectStatus;
+  languages: string[];
+  frameworks: string[];
+  dependency_files: string[];
+  warnings: string[];
+  total_files: number;
+  total_bytes: number;
+  secret_findings_count: number;
+  analyzed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CodeFile = {
+  id: string;
+  relative_path: string;
+  language: string;
+  size_bytes: number;
+  sha256: string;
+  secret_findings_count: number;
+  warning_codes: string[];
+  route_count: number;
+};
+
+export type CodeFileContent = CodeFile & {
+  content: string;
+  redacted: boolean;
+  truncated: boolean;
+};
+
+export type StaticParameter = {
+  name: string;
+  location: string;
+  required: boolean;
+};
+
+export type StaticRoute = {
+  id: string;
+  code_file_id: string;
+  framework: string;
+  methods: string[];
+  path: string;
+  handler_name: string;
+  file_path: string;
+  line_start: number;
+  line_end: number;
+  parameters: StaticParameter[];
+  authentication: {
+    required: boolean;
+    mechanisms: string[];
+    limitations: string[];
+  };
+  findings: string[];
+};
+
+export type CodeAnalysis = {
+  project: CodeProject;
+  routes: StaticRoute[];
+  analysis_log: string[];
+  limitations: string[];
+};
+
+export type CodeUploadResult = {
+  project: CodeProject;
+  files: CodeFile[];
+  policy: {
+    max_archive_bytes: number;
+    max_extracted_bytes: number;
+    max_files: number;
+    max_single_file_bytes: number;
+    max_archive_depth: number;
+  };
+  execution_performed: false;
 };
 
 export type ActiveTestStatus =

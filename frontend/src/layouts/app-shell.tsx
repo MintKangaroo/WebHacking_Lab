@@ -4,6 +4,7 @@ import {
   Braces,
   ChevronLeft,
   CircleDot,
+  FileCode2,
   FileText,
   FlaskConical,
   FolderKanban,
@@ -42,6 +43,7 @@ const primaryNavigation: NavigationItem[] = [
   { label: "Projects", icon: FolderKanban, available: true, path: "/projects" },
   { label: "HTTP Repeater", icon: TerminalSquare, available: true, path: "/repeater" },
   { label: "URL Scanner", icon: Radar, available: true, path: "/scans" },
+  { label: "Code Analysis", icon: FileCode2, available: true, path: "/code-analysis" },
   { label: "Analyzer", icon: Braces, available: true, path: "/analyzer" },
   { label: "Attack Flow", icon: GitBranch, available: false },
 ];

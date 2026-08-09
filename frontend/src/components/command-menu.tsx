@@ -21,7 +21,7 @@ const commands = [
   { label: "Create project", hint: "Phase 2", icon: FolderKanban, available: true, path: "/projects" },
   { label: "Import HTTP request", hint: "Phase 2", icon: TerminalSquare, available: true, path: "/repeater" },
   { label: "Start guarded URL scan", hint: "Phase 9", icon: Radar, available: true, path: "/scans" },
-  { label: "Run static analysis", hint: "Phase 3", icon: FileSearch, available: false },
+  { label: "Analyze uploaded code", hint: "Phase 10", icon: FileSearch, available: true, path: "/code-analysis" },
   { label: "Review safety policy", hint: "Docs", icon: ShieldCheck, available: true },
   { label: "Open settings", hint: "Phase 7", icon: Settings, available: false },
 ];

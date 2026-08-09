@@ -59,3 +59,27 @@ export async function apiJson<TResponse, TBody = unknown>(
   if (response.status === 204) return undefined as TResponse;
   return (await response.json()) as TResponse;
 }
+
+export async function apiForm<TResponse>(
+  path: string,
+  body: FormData,
+  signal?: AbortSignal,
+): Promise<TResponse> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    headers: { Accept: "application/json" },
+    body,
+    signal,
+  });
+  if (!response.ok) {
+    let message = `API request failed with status ${response.status}`;
+    try {
+      const payload = (await response.json()) as { message?: string };
+      if (payload.message) message = payload.message;
+    } catch {
+      // Keep the stable fallback for a non-JSON proxy response.
+    }
+    throw new ApiError(message, response.status);
+  }
+  return (await response.json()) as TResponse;
+}
