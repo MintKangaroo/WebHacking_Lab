@@ -82,6 +82,14 @@ const scan: ScanJob = {
     respect_logout_routes: true,
     execute_javascript: false,
   },
+  active_test_policy: {
+    enabled: false,
+    max_tests: 6,
+    max_tests_per_parameter: 6,
+    allow_limited_timing: false,
+  },
+  planned_tests_count: 0,
+  approved_tests_count: 0,
   fingerprints: [
     { name: "FastAPI", evidence: "Server response header", confidence: 0.7 },
   ],
@@ -193,6 +201,7 @@ describe("Phase 8 guarded passive scanner", () => {
           },
         ]);
       }
+      if (path === `/api/scans/${scanId}/tests`) return jsonResponse([]);
       if (path === `/api/scans/${scanId}/cancel`) {
         return jsonResponse({ id: scanId, cancellation_requested: true, status: "crawling" });
       }
@@ -201,7 +210,7 @@ describe("Phase 8 guarded passive scanner", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<App />);
-    expect(await screen.findByRole("heading", { name: "Passive URL Scanner" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Guarded URL Scanner" })).toBeInTheDocument();
     await screen.findByRole("option", { name: "Primary Workspace" });
 
     await userEvent.clear(screen.getByLabelText("Starting URL"));
@@ -210,7 +219,7 @@ describe("Phase 8 guarded passive scanner", () => {
       "https://authorized.example/review",
     );
     await userEvent.click(screen.getByLabelText("Confirm authorization"));
-    await userEvent.click(screen.getByRole("button", { name: "Start passive scan" }));
+    await userEvent.click(screen.getByRole("button", { name: "Start PASSIVE scan" }));
 
     await waitFor(() => expect(createdBody).toBeDefined());
     expect(createdBody).toMatchObject({
@@ -220,6 +229,7 @@ describe("Phase 8 guarded passive scanner", () => {
       profile: "passive",
       authorization_confirmed: true,
       confirmation_phrase: "START PASSIVE SCAN",
+      active_test_policy: { enabled: false },
     });
     expect(await screen.findByText(/authorized\.example\/review\/products\?page=1/)).toBeInTheDocument();
     expect(screen.getByText("FastAPI")).toBeInTheDocument();
@@ -231,6 +241,99 @@ describe("Phase 8 guarded passive scanner", () => {
         "/api/scans/cccccccc-cccc-4ccc-8ccc-cccccccccccc/cancel",
         expect.objectContaining({ method: "POST" }),
       );
+    });
+  });
+
+  it("shows exact SAFE previews and approves only selected tests", async () => {
+    window.history.pushState({}, "", "/scans");
+    const safeScan: ScanJob = {
+      ...scan,
+      profile: "safe",
+      status: "waiting_for_approval",
+      current_stage: "Waiting for Approval",
+      progress: 0.8,
+      requests_used: 1,
+      request_budget: 7,
+      active_test_policy: {
+        enabled: true,
+        max_tests: 6,
+        max_tests_per_parameter: 6,
+        allow_limited_timing: false,
+      },
+      planned_tests_count: 1,
+      approved_tests_count: 0,
+    };
+    let approvalBody: Record<string, unknown> | undefined;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(requestUrl(input), window.location.origin).pathname;
+      if (path === "/api/projects") return jsonResponse([projectSummary]);
+      if (path === `/api/projects/${projectId}`) return jsonResponse(projectDetail);
+      if (path === "/api/scans") return jsonResponse([safeScan]);
+      if (path === `/api/scans/${scanId}`) return jsonResponse(safeScan);
+      if (path === `/api/scans/${scanId}/endpoints`) return jsonResponse([]);
+      if (path === `/api/scans/${scanId}/parameters`) return jsonResponse([]);
+      if (path === `/api/scans/${scanId}/findings`) return jsonResponse([]);
+      if (path === `/api/scans/${scanId}/events`) return jsonResponse([]);
+      if (path === `/api/scans/${scanId}/tests`) {
+        return jsonResponse([
+          {
+            id: "33333333-3333-4333-8333-333333333333",
+            scan_id: scanId,
+            plugin_id: "safe-reflected-xss",
+            category: "xss",
+            endpoint_url: "https://authorized.example/review?q=hello",
+            method: "GET",
+            title: "Inert HTML reflection marker",
+            objective: "Check reflection without executable markup.",
+            parameter: "q",
+            mutation_type: "xss_inert_marker",
+            preview_value: "WHL_REFLECTION_PROBE_7F3A",
+            exact_request_preview: "GET /review?q=WHL_REFLECTION_PROBE_7F3A HTTP/1.1\r\nHost: authorized.example\r\n",
+            expected_signals: ["marker reflected"],
+            success_criteria: "The inert marker is returned in HTML.",
+            false_positive_notes: "Reflection is not execution.",
+            remediation: ["Contextually encode output."],
+            risk_level: "info",
+            maximum_requests: 1,
+            destructive: false,
+            requires_confirmation: true,
+            status: "preview",
+            result_status: null,
+            confidence: null,
+            evidence: [],
+            error_message: null,
+            approved_at: null,
+            completed_at: null,
+            created_at: "2026-08-09T00:00:00Z",
+          },
+        ]);
+      }
+      if (path === `/api/scans/${scanId}/approve-tests`) {
+        if (typeof init?.body !== "string") throw new Error("Expected approval JSON");
+        approvalBody = JSON.parse(init.body) as Record<string, unknown>;
+        return jsonResponse(
+          {
+            scan_id: scanId,
+            approved_test_ids: ["33333333-3333-4333-8333-333333333333"],
+            status: "active_testing",
+          },
+          202,
+        );
+      }
+      return jsonResponse({ message: `Unhandled ${path}` }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: "Review 1 previews" }));
+    expect(await screen.findByText(/GET \/review\?q=WHL_REFLECTION_PROBE/)).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText("Select Inert HTML reflection marker"));
+    await userEvent.click(screen.getByRole("button", { name: "Approve selected tests" }));
+    await waitFor(() => expect(approvalBody).toBeDefined());
+    expect(approvalBody).toEqual({
+      test_ids: ["33333333-3333-4333-8333-333333333333"],
+      authorization_confirmed: true,
+      confirmation_phrase: "APPROVE SELECTED SAFE TESTS",
     });
   });
 });

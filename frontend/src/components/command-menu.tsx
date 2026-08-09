@@ -20,7 +20,7 @@ const commands = [
   { label: "Open overview", hint: "Dashboard", icon: Activity, available: true, path: "/" },
   { label: "Create project", hint: "Phase 2", icon: FolderKanban, available: true, path: "/projects" },
   { label: "Import HTTP request", hint: "Phase 2", icon: TerminalSquare, available: true, path: "/repeater" },
-  { label: "Start passive URL scan", hint: "Phase 8", icon: Radar, available: true, path: "/scans" },
+  { label: "Start guarded URL scan", hint: "Phase 9", icon: Radar, available: true, path: "/scans" },
   { label: "Run static analysis", hint: "Phase 3", icon: FileSearch, available: false },
   { label: "Review safety policy", hint: "Docs", icon: ShieldCheck, available: true },
   { label: "Open settings", hint: "Phase 7", icon: Settings, available: false },

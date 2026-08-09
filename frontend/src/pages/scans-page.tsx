@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Ban,
   CheckCircle2,
   CircleStop,
   Clock3,
@@ -12,6 +11,7 @@ import {
   Radar,
   ShieldAlert,
   ShieldCheck,
+  SquareMousePointer,
 } from "lucide-react";
 import { useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
@@ -19,19 +19,21 @@ import { toast } from "sonner";
 
 import { getProject, getProjects } from "../api/projects";
 import {
+  approveScanTests,
   cancelScan,
-  createPassiveScan,
+  createScan,
   getScan,
   getScanEndpoints,
   getScanEvents,
   getScanFindings,
   getScanParameters,
   getScans,
+  getScanTests,
 } from "../api/scans";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import type { ScanJob, ScanStatus } from "../types/resources";
+import type { ScannerProfile, ScanJob, ScanStatus } from "../types/resources";
 import { cn } from "../utils/cn";
 
 const fieldClass =
@@ -82,7 +84,7 @@ function ScanList({
       <div className="py-10 text-center">
         <Radar className="mx-auto size-7 text-slate-700" />
         <p className="mt-3 text-sm text-slate-400">No scan jobs yet</p>
-        <p className="mt-1 text-xs text-slate-600">Review the bounded plan and start a passive scan.</p>
+        <p className="mt-1 text-xs text-slate-600">Start a passive scan or a separately approved SAFE plan.</p>
       </div>
     );
   }
@@ -121,14 +123,17 @@ export function ScansPage() {
   const [projectId, setProjectId] = useState("");
   const [workspaceId, setWorkspaceId] = useState("");
   const [target, setTarget] = useState("http://127.0.0.1:8001/");
-  const [expectedUse, setExpectedUse] = useState("Authorized passive application inventory");
+  const [profile, setProfile] = useState<Extract<ScannerProfile, "passive" | "safe">>("passive");
+  const [expectedUse, setExpectedUse] = useState("Authorized application inventory and safe validation");
   const [confirmed, setConfirmed] = useState(false);
   const [maxDepth, setMaxDepth] = useState(2);
   const [maxPages, setMaxPages] = useState(20);
   const [maxRequests, setMaxRequests] = useState(30);
   const [requestsPerSecond, setRequestsPerSecond] = useState(1);
+  const [maxActiveTests, setMaxActiveTests] = useState(6);
   const [selectedScanId, setSelectedScanId] = useState("");
-  const [activeTab, setActiveTab] = useState<"endpoints" | "parameters" | "findings" | "events">("endpoints");
+  const [selectedTestIds, setSelectedTestIds] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<"endpoints" | "parameters" | "tests" | "findings" | "events">("endpoints");
 
   const projects = useQuery({
     queryKey: ["projects"],
@@ -191,14 +196,20 @@ export function ScansPage() {
     enabled: Boolean(effectiveScanId),
     refetchInterval: inventoryRefresh,
   });
+  const tests = useQuery({
+    queryKey: ["scan-tests", effectiveScanId],
+    queryFn: ({ signal }) => getScanTests(effectiveScanId, signal),
+    enabled: Boolean(effectiveScanId),
+    refetchInterval: inventoryRefresh,
+  });
 
   const create = useMutation({
-    mutationFn: createPassiveScan,
+    mutationFn: createScan,
     onSuccess: async (job) => {
       setSelectedScanId(job.id);
       setConfirmed(false);
       await queryClient.invalidateQueries({ queryKey: ["scans", job.project_id] });
-      toast.success("Bounded passive scan queued");
+      toast.success(job.profile === "safe" ? "SAFE scan queued" : "Passive scan queued");
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -210,15 +221,27 @@ export function ScansPage() {
     },
     onError: (error: Error) => toast.error(error.message),
   });
+  const approve = useMutation({
+    mutationFn: () => approveScanTests(effectiveScanId, selectedTestIds),
+    onSuccess: async () => {
+      setSelectedTestIds([]);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["scan", effectiveScanId] }),
+        queryClient.invalidateQueries({ queryKey: ["scan-tests", effectiveScanId] }),
+      ]);
+      toast.success("Selected exact requests approved");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 
   const selectedWorkspace = enabledWorkspaces.find(
     (workspace) => workspace.id === effectiveWorkspaceId,
   );
   const requestCeiling = Math.min(
-    maxRequests,
+    maxRequests + (profile === "safe" ? maxActiveTests : 0),
     selectedWorkspace
       ? selectedWorkspace.request_budget - selectedWorkspace.requests_used
-      : maxRequests,
+      : maxRequests + (profile === "safe" ? maxActiveTests : 0),
   );
   const canSubmit = Boolean(
     effectiveProjectId &&
@@ -236,7 +259,7 @@ export function ScansPage() {
       project_id: effectiveProjectId,
       workspace_id: effectiveWorkspaceId,
       target: target.trim(),
-      profile: "passive",
+      profile,
       crawl_policy: {
         max_depth: maxDepth,
         max_pages: maxPages,
@@ -248,8 +271,14 @@ export function ScansPage() {
         respect_logout_routes: true,
         execute_javascript: false,
       },
+      active_test_policy: {
+        enabled: profile === "safe",
+        max_tests: maxActiveTests,
+        max_tests_per_parameter: 6,
+        allow_limited_timing: false,
+      },
       authorization_confirmed: true,
-      confirmation_phrase: "START PASSIVE SCAN",
+      confirmation_phrase: profile === "safe" ? "START SAFE SCAN" : "START PASSIVE SCAN",
       expected_use: expectedUse.trim(),
     });
   };
@@ -258,10 +287,11 @@ export function ScansPage() {
     () => ({
       endpoints: endpoints.data?.length ?? 0,
       parameters: parameters.data?.length ?? 0,
+      tests: tests.data?.length ?? 0,
       findings: findings.data?.length ?? 0,
       events: events.data?.length ?? 0,
     }),
-    [endpoints.data, parameters.data, findings.data, events.data],
+    [endpoints.data, parameters.data, tests.data, findings.data, events.data],
   );
 
   return (
@@ -271,16 +301,16 @@ export function ScansPage() {
           <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-cyan-400">
             Guarded URL discovery
           </p>
-          <h1 className="mt-2 text-2xl font-semibold text-slate-50">Passive URL Scanner</h1>
+          <h1 className="mt-2 text-2xl font-semibold text-slate-50">Guarded URL Scanner</h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
-            Crawl an authorized application without mutation payloads. Every request uses the same
-            Scope Guard, DNS pinning, redirect validation, rate limit, redaction, and audit path as
-            the HTTP Repeater.
+            Inventory an authorized application passively, or let SAFE mode prepare a few inert,
+            read-only tests. SAFE requests remain Preview-only until you select and approve their
+            exact HTTP text.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Badge tone="safe"><ShieldCheck className="size-3" /> External hosts allowed only in registered scope</Badge>
-          <Badge><Ban className="size-3" /> No active exploit tests</Badge>
+          <Badge><SquareMousePointer className="size-3" /> Per-test approval</Badge>
         </div>
       </header>
 
@@ -292,6 +322,18 @@ export function ScansPage() {
             </CardHeader>
             <CardContent>
               <form onSubmit={submit} className="space-y-4">
+                <label className="block text-xs text-slate-400">
+                  Scan profile
+                  <select
+                    aria-label="Scan profile"
+                    value={profile}
+                    onChange={(event) => setProfile(event.target.value as "passive" | "safe")}
+                    className={`${fieldClass} mt-1.5`}
+                  >
+                    <option value="passive">PASSIVE · inventory only</option>
+                    <option value="safe">SAFE · plan then approve tests</option>
+                  </select>
+                </label>
                 <label className="block text-xs text-slate-400">
                   Project
                   <select
@@ -345,15 +387,22 @@ export function ScansPage() {
                   <label className="text-xs text-slate-400">Requests<input aria-label="Maximum requests" type="number" min={1} max={300} value={maxRequests} onChange={(event) => setMaxRequests(event.currentTarget.valueAsNumber)} className={`${fieldClass} mt-1.5`} /></label>
                   <label className="text-xs text-slate-400">Req / sec<input aria-label="Requests per second" type="number" min={0.1} max={5} step={0.1} value={requestsPerSecond} onChange={(event) => setRequestsPerSecond(event.currentTarget.valueAsNumber)} className={`${fieldClass} mt-1.5`} /></label>
                 </div>
+                {profile === "safe" && (
+                  <label className="block text-xs text-slate-400">
+                    Maximum active tests
+                    <input aria-label="Maximum active tests" type="number" min={1} max={10} value={maxActiveTests} onChange={(event) => setMaxActiveTests(event.currentTarget.valueAsNumber)} className={`${fieldClass} mt-1.5`} />
+                  </label>
+                )}
                 {maxRequests < maxPages && <p className="text-xs text-red-300">Request limit must be at least the page limit.</p>}
                 <div className="rounded-lg border border-cyan-400/15 bg-cyan-400/[0.035] p-3">
                   <p className="text-[10px] font-medium uppercase tracking-wider text-cyan-300">Exact safety envelope</p>
                   <ul className="mt-2 space-y-1 text-xs leading-5 text-slate-400">
-                    <li>Up to {requestCeiling} GET requests, sequentially</li>
+                    <li>Up to {requestCeiling} total requests, sequentially</li>
                     <li>Scope or global rate limits may reduce the selected speed</li>
                     <li>Maximum 2 MB response per request</li>
                     <li>Logout-like routes skipped; JavaScript disabled</li>
                     <li>Redirect target fully revalidated before use</li>
+                    {profile === "safe" && <li>{maxActiveTests} low-risk tests maximum; none run before separate approval</li>}
                   </ul>
                 </div>
                 <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-line p-3 text-xs leading-5 text-slate-400">
@@ -364,10 +413,10 @@ export function ScansPage() {
                     onChange={(event) => setConfirmed(event.target.checked)}
                     className="mt-1 accent-cyan-400"
                   />
-                  <span>I own this target or have explicit permission to perform this bounded passive scan.</span>
+                  <span>I own this target or have explicit permission to perform this bounded {profile.toUpperCase()} scan.</span>
                 </label>
                 <Button type="submit" className="w-full" disabled={!canSubmit || create.isPending}>
-                  {create.isPending ? "Validating scope…" : "Start passive scan"}
+                  {create.isPending ? "Validating scope…" : `Start ${profile.toUpperCase()} scan`}
                 </Button>
               </form>
             </CardContent>
@@ -375,7 +424,7 @@ export function ScansPage() {
 
           <Card>
             <CardHeader><CardTitle>Recent jobs</CardTitle></CardHeader>
-            <CardContent><ScanList scans={scans.data ?? []} selectedId={effectiveScanId} onSelect={setSelectedScanId} /></CardContent>
+            <CardContent><ScanList scans={scans.data ?? []} selectedId={effectiveScanId} onSelect={(id) => { setSelectedScanId(id); setSelectedTestIds([]); }} /></CardContent>
           </Card>
         </div>
 
@@ -410,10 +459,23 @@ export function ScansPage() {
                 </CardContent>
               </Card>
 
+              {scan.data.status === "waiting_for_approval" && (
+                <Card className="border-amber-400/20 bg-amber-400/[0.035]">
+                  <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center">
+                    <ShieldAlert className="size-5 shrink-0 text-amber-300" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-amber-100">No SAFE test has been sent</p>
+                      <p className="mt-1 text-xs leading-5 text-amber-200/60">Review the exact HTTP previews, select only the tests you accept, then approve them once.</p>
+                    </div>
+                    <Button variant="secondary" size="sm" onClick={() => setActiveTab("tests")}>Review {scan.data.planned_tests_count} previews</Button>
+                  </CardContent>
+                </Card>
+              )}
+
               <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_300px]">
                 <Card className="min-w-0 overflow-hidden">
                   <div className="flex overflow-x-auto border-b border-line px-2">
-                    {(["endpoints", "parameters", "findings", "events"] as const).map((tab) => (
+                    {(["endpoints", "parameters", "tests", "findings", "events"] as const).map((tab) => (
                       <button key={tab} type="button" onClick={() => setActiveTab(tab)} className={cn("border-b-2 px-4 py-3 text-xs capitalize", activeTab === tab ? "border-cyan-400 text-cyan-300" : "border-transparent text-slate-500 hover:text-slate-300")}>
                         {tab} <span className="ml-1 font-mono text-[10px] text-slate-600">{tabCounts[tab]}</span>
                       </button>
@@ -453,6 +515,37 @@ export function ScansPage() {
                         {!findings.data?.length && <p className="p-8 text-center text-sm text-slate-600">No passive candidates recorded.</p>}
                       </div>
                     )}
+                    {activeTab === "tests" && (
+                      <div className="space-y-3 p-4">
+                        {(tests.data ?? []).map((item) => {
+                          const selectable = scan.data.status === "waiting_for_approval" && item.status === "preview";
+                          const checked = selectedTestIds.includes(item.id);
+                          return (
+                            <label key={item.id} className={cn("block rounded-lg border p-4", checked ? "border-cyan-400/30 bg-cyan-400/[0.04]" : "border-line bg-black/15", selectable && "cursor-pointer")}>
+                              <div className="flex items-start gap-3">
+                                <input aria-label={`Select ${item.title}`} type="checkbox" checked={checked} disabled={!selectable} onChange={() => setSelectedTestIds((current) => current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id])} className="mt-1 accent-cyan-400" />
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex flex-wrap items-center gap-2"><Badge tone={item.status === "completed" ? "safe" : item.status === "blocked" ? "critical" : item.status === "preview" ? "warning" : "accent"}>{item.status}</Badge><Badge>{item.risk_level} risk</Badge><span className="font-mono text-[10px] text-slate-600">1 request</span></div>
+                                  <h3 className="mt-2 text-sm font-medium text-slate-100">{item.title}</h3>
+                                  <p className="mt-1 text-xs leading-5 text-slate-500">{item.objective}</p>
+                                  <pre className="mt-3 overflow-x-auto rounded-md border border-line bg-black/30 p-3 font-mono text-[11px] leading-5 text-slate-300">{item.exact_request_preview}</pre>
+                                  <div className="mt-3 grid gap-3 text-[11px] leading-4 text-slate-600 sm:grid-cols-2"><p><span className="text-slate-400">Success:</span> {item.success_criteria}</p><p><span className="text-slate-400">False positive:</span> {item.false_positive_notes}</p></div>
+                                  {item.result_status && <p className="mt-3 text-xs text-emerald-300">Result: {item.result_status} · {Math.round((item.confidence ?? 0) * 100)}% confidence</p>}
+                                  {item.error_message && <p className="mt-3 text-xs text-red-300">{item.error_message}</p>}
+                                </div>
+                              </div>
+                            </label>
+                          );
+                        })}
+                        {!tests.data?.length && <p className="p-8 text-center text-sm text-slate-600">Passive scans have no active test previews.</p>}
+                        {scan.data.status === "waiting_for_approval" && Boolean(tests.data?.length) && (
+                          <div className="sticky bottom-0 flex flex-col gap-3 rounded-lg border border-cyan-400/20 bg-[#111a25]/95 p-4 shadow-xl backdrop-blur sm:flex-row sm:items-center">
+                            <p className="flex-1 text-xs leading-5 text-slate-400">Selected {selectedTestIds.length}. Approval sends only these exact single requests; unselected previews remain unsent.</p>
+                            <Button disabled={!selectedTestIds.length || approve.isPending} onClick={() => approve.mutate()}>{approve.isPending ? "Approving…" : "Approve selected tests"}</Button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     {activeTab === "events" && (
                       <div className="divide-y divide-line/70">
                         {(events.data ?? []).map((item) => (
@@ -476,7 +569,7 @@ export function ScansPage() {
                   <Card>
                     <CardHeader><CardTitle className="flex items-center gap-2"><ShieldAlert className="size-4 text-amber-300" /> Enforced boundaries</CardTitle></CardHeader>
                     <CardContent className="space-y-2 text-xs leading-5 text-slate-500">
-                      <p>GET-only document retrieval</p><p>Single worker despite policy ceiling</p><p>No browser JavaScript</p><p>No payload mutation or login automation</p><p>Secret query values omitted and masked</p>
+                      <p>GET-only crawl; SAFE adds single GET/OPTIONS tests</p><p>One request per approved test</p><p>No browser JavaScript</p><p>No extraction, delay, write, or command payloads</p><p>Secret-shaped parameters skipped and masked</p>
                       <a href="/api/docs#/scanner" target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1 text-cyan-300 hover:text-cyan-200">Scanner API <ExternalLink className="size-3" /></a>
                     </CardContent>
                   </Card>
@@ -492,8 +585,8 @@ export function ScansPage() {
       <Card className="border-violet-400/10 bg-violet-400/[0.02]">
         <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
           <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-violet-400/10"><ListTree className="size-4 text-violet-300" /></div>
-          <div><p className="text-xs font-medium text-slate-300">Active test planning is intentionally unavailable in this phase.</p><p className="mt-1 text-xs text-slate-600">Future SAFE tests will require a separate exact-request preview and per-test approval. Existing passive scans cannot escalate profiles.</p></div>
-          <Badge className="sm:ml-auto"><Gauge className="size-3" /> Passive only</Badge>
+          <div><p className="text-xs font-medium text-slate-300">SAFE mode stops for a second approval.</p><p className="mt-1 text-xs text-slate-600">SQL error/boolean signals, inert reflection, reserved-domain redirect, and CORS policy checks are bounded. Limited timing and data extraction remain disabled.</p></div>
+          <Badge className="sm:ml-auto"><Gauge className="size-3" /> Max 10 tests</Badge>
         </CardContent>
       </Card>
     </div>

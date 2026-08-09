@@ -187,6 +187,13 @@ export type CrawlPolicy = {
   execute_javascript: boolean;
 };
 
+export type ActiveTestPolicy = {
+  enabled: boolean;
+  max_tests: number;
+  max_tests_per_parameter: number;
+  allow_limited_timing: boolean;
+};
+
 export type TechnologyFingerprint = {
   name: string;
   evidence: string;
@@ -209,6 +216,9 @@ export type ScanJob = {
   findings_count: number;
   cancellation_requested: boolean;
   crawl_policy: CrawlPolicy;
+  active_test_policy: ActiveTestPolicy;
+  planned_tests_count: number;
+  approved_tests_count: number;
   fingerprints: TechnologyFingerprint[];
   error_message: string | null;
   started_at: string | null;
@@ -268,6 +278,45 @@ export type ScanEvent = {
   level: string;
   message: string;
   details: Record<string, unknown>;
+  created_at: string;
+};
+
+export type ActiveTestStatus =
+  | "preview"
+  | "approved"
+  | "running"
+  | "completed"
+  | "inconclusive"
+  | "blocked";
+
+export type ScanTestCase = {
+  id: string;
+  scan_id: string;
+  plugin_id: string;
+  category: string;
+  endpoint_url: string;
+  method: string;
+  title: string;
+  objective: string;
+  parameter: string | null;
+  mutation_type: string;
+  preview_value: string;
+  exact_request_preview: string;
+  expected_signals: string[];
+  success_criteria: string;
+  false_positive_notes: string;
+  remediation: string[];
+  risk_level: "info" | "low" | "medium" | "high";
+  maximum_requests: number;
+  destructive: boolean;
+  requires_confirmation: boolean;
+  status: ActiveTestStatus;
+  result_status: string | null;
+  confidence: number | null;
+  evidence: Array<Record<string, unknown>>;
+  error_message: string | null;
+  approved_at: string | null;
+  completed_at: string | null;
   created_at: string;
 };
 
