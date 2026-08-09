@@ -1,12 +1,13 @@
-"""Scan job creation, policy validation, cancellation, and read models."""
+"""Scan creation, explicit test approval, cancellation, and read models."""
 
 import ipaddress
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from webhacking_lab.core.config import Settings
-from webhacking_lab.database.models import ScanEvent, ScanJob
+from webhacking_lab.database.models import ScanEvent, ScanJob, ScanTestCase
 from webhacking_lab.database.repositories.audit import AuditRepository
 from webhacking_lab.database.repositories.projects import (
     ProjectRepository,
@@ -15,6 +16,7 @@ from webhacking_lab.database.repositories.projects import (
 )
 from webhacking_lab.database.repositories.scans import ScanRepository
 from webhacking_lab.domain.enums import (
+    ActiveTestStatus,
     AuditEventType,
     ScannerProfile,
     ScanStatus,
@@ -29,6 +31,7 @@ from webhacking_lab.http_client.models import ScopeRuleSpec
 from webhacking_lab.http_client.request_normalizer import normalize_request
 from webhacking_lab.http_client.scope_guard import DnsResolver, ScopeGuard
 from webhacking_lab.scanner.models import (
+    ActiveTestPolicy,
     CrawlPolicy,
     ScanCancelRead,
     ScanEndpointRead,
@@ -37,6 +40,9 @@ from webhacking_lab.scanner.models import (
     ScanJobCreate,
     ScanJobRead,
     ScanParameterRead,
+    ScanTestCaseRead,
+    ScanTestsApproval,
+    ScanTestsApprovalRead,
     TechnologyFingerprint,
 )
 
@@ -73,6 +79,13 @@ def scan_job_read(job: ScanJob) -> ScanJobRead:
         findings_count=job.findings_count,
         cancellation_requested=job.cancellation_requested,
         crawl_policy=CrawlPolicy.model_validate(job.crawl_policy_json),
+        active_test_policy=ActiveTestPolicy.model_validate(
+            job.metadata_json.get("active_test_policy", {})
+        ),
+        planned_tests_count=len(job.test_cases),
+        approved_tests_count=sum(
+            item.status != ActiveTestStatus.PREVIEW for item in job.test_cases
+        ),
         fingerprints=[
             TechnologyFingerprint.model_validate(value)
             for value in job.fingerprint_json.get("signals", [])
@@ -104,14 +117,12 @@ class ScanService:
         self._audit = AuditRepository(session)
 
     async def create(self, data: ScanJobCreate, correlation_id: str | None) -> ScanJobRead:
-        """Persist a validated passive plan; no request is sent by this method."""
+        """Persist a validated passive or SAFE plan; no request is sent here."""
 
         if self._settings.analysis_only or not self._settings.network_execution_enabled:
-            raise ExecutionPolicyError(
-                "Passive URL scanning is disabled by the server safety policy"
-            )
-        if data.profile != ScannerProfile.PASSIVE:
-            raise ExecutionPolicyError("Only the passive scanner profile is implemented in Phase 8")
+            raise ExecutionPolicyError("URL scanning is disabled by the server safety policy")
+        if data.profile not in {ScannerProfile.PASSIVE, ScannerProfile.SAFE}:
+            raise ExecutionPolicyError("Only PASSIVE and SAFE scanner profiles are implemented")
         if data.crawl_policy.execute_javascript:
             raise ExecutionPolicyError(
                 "Browser JavaScript execution is not available in passive scans"
@@ -151,7 +162,17 @@ class ScanService:
             raise ExecutionPolicyError(f"Scope Guard blocked the scan target: {decision.reason}")
         if not _is_loopback(normalized.host) and not matched.authorization_confirmed:
             raise ExecutionPolicyError("External scan targets require an authorized scope rule")
-        effective_request_limit = min(data.crawl_policy.max_requests, remaining_budget)
+        active_limit = 0
+        if data.profile == ScannerProfile.SAFE:
+            if remaining_budget < 2:
+                raise ExecutionPolicyError(
+                    "SAFE scans require budget for at least one crawl and one approved test"
+                )
+            active_limit = min(data.active_test_policy.max_tests, remaining_budget - 1)
+        effective_request_limit = min(
+            data.crawl_policy.max_requests,
+            remaining_budget - active_limit,
+        )
         effective_policy = CrawlPolicy.model_validate(
             data.crawl_policy.model_copy(
                 update={
@@ -178,19 +199,31 @@ class ScanService:
                 status=ScanStatus.QUEUED,
                 current_stage="Queued",
                 progress=0,
-                request_budget=effective_policy.max_requests,
+                request_budget=effective_policy.max_requests + active_limit,
                 crawl_policy_json=effective_policy.model_dump(mode="json"),
-                metadata_json={"expected_use": data.expected_use.strip()},
+                metadata_json={
+                    "expected_use": data.expected_use.strip(),
+                    "active_test_policy": data.active_test_policy.model_copy(
+                        update={"max_tests": active_limit}
+                    ).model_dump(mode="json")
+                    if data.profile == ScannerProfile.SAFE
+                    else ActiveTestPolicy().model_dump(mode="json"),
+                },
             )
         )
         await self._scans.add_event(
             ScanEvent(
                 scan_id=job.id,
                 stage="Queued",
-                message="Passive scan plan accepted; no mutation tests will be generated.",
+                message=(
+                    "SAFE scan accepted; mutation requests require a second, per-test approval."
+                    if data.profile == ScannerProfile.SAFE
+                    else "Passive scan accepted; no mutation tests will be generated."
+                ),
                 details_json={
                     "profile": data.profile.value,
                     "maximum_requests": effective_policy.max_requests,
+                    "maximum_active_tests": active_limit,
                     "maximum_depth": effective_policy.max_depth,
                     "requests_per_second": effective_policy.requests_per_second,
                 },
@@ -206,7 +239,8 @@ class ScanService:
             details={
                 "profile": data.profile.value,
                 "hostname": normalized.host,
-                "maximum_requests": effective_policy.max_requests,
+                "maximum_requests": effective_policy.max_requests + active_limit,
+                "maximum_active_tests": active_limit,
                 "expected_use": data.expected_use.strip(),
             },
         )
@@ -233,12 +267,21 @@ class ScanService:
             raise ConflictError("A completed scan cannot be cancelled")
         job.cancellation_requested = True
         job.version += 1
+        waiting_for_approval = job.status == ScanStatus.WAITING_FOR_APPROVAL
+        if waiting_for_approval:
+            job.status = ScanStatus.CANCELLED
+            job.current_stage = "Cancelled"
+            job.finished_at = datetime.now(UTC)
         await self._scans.add_event(
             ScanEvent(
                 scan_id=job.id,
                 stage=job.current_stage,
                 level="warning",
-                message="Cancellation requested; the current bounded request may finish first.",
+                message=(
+                    "Scan cancelled; unapproved SAFE previews were not sent."
+                    if waiting_for_approval
+                    else "Cancellation requested; the current bounded request may finish first."
+                ),
             )
         )
         await self._audit.record(
@@ -249,6 +292,17 @@ class ScanService:
             workspace_id=job.workspace_id,
             correlation_id=correlation_id,
         )
+        if waiting_for_approval:
+            await self._audit.record(
+                AuditEventType.SCAN_CANCELLED,
+                resource_type="scan_job",
+                resource_id=job.id,
+                project_id=job.project_id,
+                workspace_id=job.workspace_id,
+                correlation_id=correlation_id,
+                details={"requests_used": job.requests_used, "pending_tests_sent": 0},
+            )
+        await self._session.commit()
         return ScanCancelRead(
             id=job.id,
             cancellation_requested=True,
@@ -289,13 +343,112 @@ class ScanService:
                 created_at=value.created_at,
             )
             for value in await self._scans.list_findings(scan_id)
-            if value.status
-            in {
-                VerificationStatus.OBSERVATION.value,
-                VerificationStatus.SUSPICIOUS.value,
-                VerificationStatus.LIKELY.value,
-            }
+            if value.status != VerificationStatus.NOT_TESTED.value
         ]
+
+    async def tests(self, scan_id: UUID) -> list[ScanTestCaseRead]:
+        """Return the exact persisted previews and redacted result evidence."""
+
+        await self.get(scan_id)
+        return [self._test_read(value) for value in await self._scans.list_test_cases(scan_id)]
+
+    @staticmethod
+    def _test_read(value: ScanTestCase) -> ScanTestCaseRead:
+        return ScanTestCaseRead(
+            id=value.id,
+            scan_id=value.scan_id,
+            plugin_id=value.plugin_id,
+            category=value.category,
+            endpoint_url=value.endpoint_url,
+            method=value.method,
+            title=value.title,
+            objective=value.objective,
+            parameter=value.parameter,
+            mutation_type=value.mutation_type,
+            preview_value=value.preview_value,
+            exact_request_preview=value.exact_request_preview,
+            expected_signals=value.expected_signals_json,
+            success_criteria=value.success_criteria,
+            false_positive_notes=value.false_positive_notes,
+            remediation=value.remediation_json,
+            risk_level=value.risk_level,
+            maximum_requests=value.maximum_requests,
+            destructive=value.destructive,
+            requires_confirmation=value.requires_confirmation,
+            status=value.status,
+            result_status=value.result_status,
+            confidence=value.confidence,
+            evidence=value.evidence_json,
+            error_message=value.error_message,
+            approved_at=value.approved_at,
+            completed_at=value.completed_at,
+            created_at=value.created_at,
+        )
+
+    async def approve_tests(
+        self,
+        scan_id: UUID,
+        data: ScanTestsApproval,
+        correlation_id: str | None,
+    ) -> ScanTestsApprovalRead:
+        """Approve only selected low-risk previews; background execution starts later."""
+
+        job = await self._scans.get_job(scan_id)
+        if job is None:
+            raise EntityNotFoundError("Scan job was not found")
+        if job.profile != ScannerProfile.SAFE or job.status != ScanStatus.WAITING_FOR_APPROVAL:
+            raise ConflictError("Only a SAFE scan waiting for approval can execute tests")
+        if job.cancellation_requested:
+            raise ConflictError("A cancelled scan cannot approve tests")
+        policy = ActiveTestPolicy.model_validate(job.metadata_json.get("active_test_policy", {}))
+        if len(data.test_ids) > policy.max_tests:
+            raise ExecutionPolicyError("Selected tests exceed the persisted SAFE test ceiling")
+        tests: list[ScanTestCase] = []
+        for test_id in data.test_ids:
+            test = await self._scans.get_test_case(test_id)
+            if test is None or test.scan_id != job.id:
+                raise ExecutionPolicyError("Every selected test must belong to this scan")
+            if (
+                test.status != ActiveTestStatus.PREVIEW
+                or test.destructive
+                or test.maximum_requests != 1
+                or test.risk_level not in {"info", "low"}
+            ):
+                raise ExecutionPolicyError("A selected test violates the SAFE execution policy")
+            tests.append(test)
+        remaining = job.request_budget - job.requests_used
+        if len(tests) > remaining:
+            raise ExecutionPolicyError("Selected tests exceed the remaining request budget")
+        approved_at = datetime.now(UTC)
+        for test in tests:
+            test.status = ActiveTestStatus.APPROVED
+            test.approved_at = approved_at
+        job.status = ScanStatus.ACTIVE_TESTING
+        job.current_stage = "Active Testing"
+        job.progress = max(job.progress, 0.82)
+        await self._scans.add_event(
+            ScanEvent(
+                scan_id=job.id,
+                stage=job.current_stage,
+                message="Selected exact requests approved for bounded background execution.",
+                details_json={"test_ids": [str(value.id) for value in tests]},
+            )
+        )
+        await self._audit.record(
+            AuditEventType.SCAN_TESTS_APPROVED,
+            resource_type="scan_job",
+            resource_id=job.id,
+            project_id=job.project_id,
+            workspace_id=job.workspace_id,
+            correlation_id=correlation_id,
+            details={"test_ids": [str(value.id) for value in tests]},
+        )
+        await self._session.commit()
+        return ScanTestsApprovalRead(
+            scan_id=job.id,
+            approved_test_ids=[value.id for value in tests],
+            status=job.status,
+        )
 
     async def events(self, scan_id: UUID) -> list[ScanEventRead]:
         await self.get(scan_id)

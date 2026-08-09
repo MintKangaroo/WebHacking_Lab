@@ -12,6 +12,7 @@ from webhacking_lab.database.models import (
     ScanFinding,
     ScanJob,
     ScanParameter,
+    ScanTestCase,
 )
 
 
@@ -35,6 +36,7 @@ class ScanRepository:
                 selectinload(ScanJob.parameters),
                 selectinload(ScanJob.findings),
                 selectinload(ScanJob.events),
+                selectinload(ScanJob.test_cases),
             )
         )
         return job
@@ -48,6 +50,7 @@ class ScanRepository:
                 selectinload(ScanJob.parameters),
                 selectinload(ScanJob.findings),
                 selectinload(ScanJob.events),
+                selectinload(ScanJob.test_cases),
             )
             .order_by(ScanJob.created_at.desc())
         )
@@ -103,5 +106,21 @@ class ScanRepository:
     async def list_events(self, scan_id: UUID) -> list[ScanEvent]:
         result = await self._session.scalars(
             select(ScanEvent).where(ScanEvent.scan_id == scan_id).order_by(ScanEvent.created_at)
+        )
+        return list(result)
+
+    async def add_test_case(self, test_case: ScanTestCase) -> ScanTestCase:
+        self._session.add(test_case)
+        await self._session.flush()
+        return test_case
+
+    async def get_test_case(self, test_id: UUID) -> ScanTestCase | None:
+        return await self._session.get(ScanTestCase, test_id)
+
+    async def list_test_cases(self, scan_id: UUID) -> list[ScanTestCase]:
+        result = await self._session.scalars(
+            select(ScanTestCase)
+            .where(ScanTestCase.scan_id == scan_id)
+            .order_by(ScanTestCase.created_at, ScanTestCase.plugin_id)
         )
         return list(result)

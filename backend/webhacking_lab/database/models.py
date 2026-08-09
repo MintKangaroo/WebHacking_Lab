@@ -21,6 +21,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from webhacking_lab.database.base import Base, TimestampedUuidMixin
 from webhacking_lab.domain.enums import (
+    ActiveTestStatus,
     AnalysisMode,
     AuditEventType,
     ScannerProfile,
@@ -249,6 +250,10 @@ class ScanJob(TimestampedUuidMixin, VersionedEntityMixin, Base):
         back_populates="scan",
         cascade="all, delete-orphan",
     )
+    test_cases: Mapped[list["ScanTestCase"]] = relationship(
+        back_populates="scan",
+        cascade="all, delete-orphan",
+    )
 
 
 class ScanEndpoint(TimestampedUuidMixin, Base):
@@ -340,6 +345,64 @@ class ScanFinding(TimestampedUuidMixin, Base):
     limitations_json: Mapped[list[str]] = mapped_column(JSON, default=list)
 
     scan: Mapped[ScanJob] = relationship(back_populates="findings")
+
+
+class ScanTestCase(TimestampedUuidMixin, Base):
+    """One exact SAFE request preview with an independent approval state."""
+
+    __tablename__ = "scan_test_cases"
+
+    scan_id: Mapped[UUID] = mapped_column(
+        ForeignKey("scan_jobs.id", ondelete="CASCADE"),
+        index=True,
+    )
+    plugin_id: Mapped[str] = mapped_column(String(100), index=True)
+    category: Mapped[str] = mapped_column(String(80))
+    endpoint_url: Mapped[str] = mapped_column(Text)
+    method: Mapped[str] = mapped_column(String(16))
+    title: Mapped[str] = mapped_column(String(240))
+    objective: Mapped[str] = mapped_column(Text)
+    parameter: Mapped[str | None] = mapped_column(String(300))
+    mutation_type: Mapped[str] = mapped_column(String(80))
+    preview_value: Mapped[str] = mapped_column(Text)
+    exact_request_preview: Mapped[str] = mapped_column(Text)
+    expected_signals_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    success_criteria: Mapped[str] = mapped_column(Text)
+    false_positive_notes: Mapped[str] = mapped_column(Text)
+    remediation_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    risk_level: Mapped[str] = mapped_column(String(24))
+    maximum_requests: Mapped[int] = mapped_column(Integer, default=1)
+    destructive: Mapped[bool] = mapped_column(Boolean, default=False)
+    requires_confirmation: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[ActiveTestStatus] = mapped_column(
+        Enum(ActiveTestStatus, native_enum=False, length=24),
+        default=ActiveTestStatus.PREVIEW,
+        index=True,
+    )
+    baseline_request_id: Mapped[UUID] = mapped_column(
+        ForeignKey("http_requests.id", ondelete="CASCADE"),
+        index=True,
+    )
+    baseline_response_id: Mapped[UUID] = mapped_column(
+        ForeignKey("http_responses.id", ondelete="CASCADE"),
+        index=True,
+    )
+    test_request_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("http_requests.id", ondelete="SET NULL"),
+        index=True,
+    )
+    test_response_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("http_responses.id", ondelete="SET NULL"),
+        index=True,
+    )
+    result_status: Mapped[str | None] = mapped_column(String(32))
+    confidence: Mapped[float | None] = mapped_column(Float)
+    evidence_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    scan: Mapped[ScanJob] = relationship(back_populates="test_cases")
 
 
 class ScanEvent(TimestampedUuidMixin, Base):

@@ -6,7 +6,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from webhacking_lab.domain.enums import ScannerProfile, ScanStatus
+from webhacking_lab.domain.enums import (
+    ActiveTestStatus,
+    RiskLevel,
+    ScannerProfile,
+    ScanStatus,
+    VulnerabilityCategory,
+)
 
 
 class ScannerModel(BaseModel):
@@ -35,17 +41,41 @@ class CrawlPolicy(ScannerModel):
         return self
 
 
+class ActiveTestPolicy(ScannerModel):
+    """Small hard ceiling for separately approved SAFE mutation requests."""
+
+    enabled: bool = False
+    max_tests: int = Field(default=6, ge=1, le=10)
+    max_tests_per_parameter: int = Field(default=6, ge=1, le=6)
+    allow_limited_timing: bool = False
+
+
 class ScanJobCreate(ScannerModel):
-    """Explicitly authorize one bounded passive scan plan."""
+    """Explicitly authorize one bounded passive or SAFE scan plan."""
 
     project_id: UUID
     workspace_id: UUID
     target: str = Field(min_length=1, max_length=8192)
     profile: ScannerProfile = ScannerProfile.PASSIVE
     crawl_policy: CrawlPolicy = Field(default_factory=CrawlPolicy)
+    active_test_policy: ActiveTestPolicy = Field(default_factory=ActiveTestPolicy)
     authorization_confirmed: Literal[True]
-    confirmation_phrase: Literal["START PASSIVE SCAN"]
+    confirmation_phrase: str = Field(min_length=1, max_length=40)
     expected_use: str = Field(min_length=10, max_length=1000)
+
+    @model_validator(mode="after")
+    def require_profile_confirmation(self) -> "ScanJobCreate":
+        phrase = {
+            ScannerProfile.PASSIVE: "START PASSIVE SCAN",
+            ScannerProfile.SAFE: "START SAFE SCAN",
+        }.get(self.profile)
+        if phrase is not None and self.confirmation_phrase != phrase:
+            raise ValueError(f"confirmation_phrase must be {phrase!r}")
+        if self.profile == ScannerProfile.PASSIVE and self.active_test_policy.enabled:
+            raise ValueError("Passive scans cannot enable active tests")
+        if self.profile == ScannerProfile.SAFE and not self.active_test_policy.enabled:
+            raise ValueError("SAFE scans require active_test_policy.enabled=true")
+        return self
 
 
 class DiscoveredEndpoint(ScannerModel):
@@ -101,6 +131,9 @@ class ScanJobRead(ScannerModel):
     findings_count: int
     cancellation_requested: bool
     crawl_policy: CrawlPolicy
+    active_test_policy: ActiveTestPolicy
+    planned_tests_count: int
+    approved_tests_count: int
     fingerprints: list[TechnologyFingerprint]
     error_message: str | None
     started_at: datetime | None
@@ -176,4 +209,91 @@ class ScanCancelRead(ScannerModel):
 
     id: UUID
     cancellation_requested: bool
+    status: ScanStatus
+
+
+class ActiveEndpoint(ScannerModel):
+    """Fetched runtime endpoint passed to an active scanner plugin."""
+
+    url: str
+    method: str
+    parameters: list[DiscoveredParameter]
+    baseline_request_id: UUID
+    baseline_response_id: UUID
+
+
+class ScanContext(ScannerModel):
+    """Immutable safety context exposed to plugins."""
+
+    scan_id: UUID
+    profile: ScannerProfile
+    active_policy: ActiveTestPolicy
+
+
+class HttpExchange(ScannerModel):
+    """Redacted baseline or test exchange used for evidence evaluation."""
+
+    request_id: UUID
+    response_id: UUID
+    method: str
+    url: str
+    status_code: int
+    headers: list[tuple[str, str]]
+    body: str
+    elapsed_ms: float | None
+    mutation_type: str | None = None
+
+
+class ScanTestCaseRead(ScannerModel):
+    """Exact, persisted, individually approvable SAFE test preview."""
+
+    id: UUID
+    scan_id: UUID
+    plugin_id: str
+    category: VulnerabilityCategory
+    endpoint_url: str
+    method: str
+    title: str
+    objective: str
+    parameter: str | None
+    mutation_type: str
+    preview_value: str
+    exact_request_preview: str
+    expected_signals: list[str]
+    success_criteria: str
+    false_positive_notes: str
+    remediation: list[str]
+    risk_level: RiskLevel
+    maximum_requests: int
+    destructive: bool
+    requires_confirmation: bool
+    status: ActiveTestStatus
+    result_status: str | None
+    confidence: float | None
+    evidence: list[dict[str, Any]]
+    error_message: str | None
+    approved_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime
+
+
+class ScanTestsApproval(ScannerModel):
+    """Select a small set of exact requests after the preview has been read."""
+
+    test_ids: list[UUID] = Field(min_length=1, max_length=10)
+    authorization_confirmed: Literal[True]
+    confirmation_phrase: Literal["APPROVE SELECTED SAFE TESTS"]
+
+    @model_validator(mode="after")
+    def require_unique_test_ids(self) -> "ScanTestsApproval":
+        if len(set(self.test_ids)) != len(self.test_ids):
+            raise ValueError("test_ids must not contain duplicates")
+        return self
+
+
+class ScanTestsApprovalRead(ScannerModel):
+    """Acknowledgement returned before background execution starts."""
+
+    scan_id: UUID
+    approved_test_ids: list[UUID]
     status: ScanStatus

@@ -1,4 +1,4 @@
-"""Cancellable passive URL scan endpoints."""
+"""Cancellable passive and separately approved SAFE scan endpoints."""
 
 from typing import Annotated
 from uuid import UUID
@@ -18,6 +18,7 @@ from webhacking_lab.core.rate_limit import RequestGate
 from webhacking_lab.database.session import Database
 from webhacking_lab.http_client.client import SingleHopSender
 from webhacking_lab.http_client.scope_guard import DnsResolver
+from webhacking_lab.scanner.active_engine import run_approved_scan_tests
 from webhacking_lab.scanner.engine import run_scan_job
 from webhacking_lab.scanner.jobs import ScanTaskRegistry
 from webhacking_lab.scanner.models import (
@@ -28,6 +29,9 @@ from webhacking_lab.scanner.models import (
     ScanJobCreate,
     ScanJobRead,
     ScanParameterRead,
+    ScanTestCaseRead,
+    ScanTestsApproval,
+    ScanTestsApprovalRead,
 )
 from webhacking_lab.services.scans import ScanService
 
@@ -48,7 +52,7 @@ def _correlation_id(request: Request) -> str | None:
     "/scans",
     response_model=ScanJobRead,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Start one explicitly approved bounded passive URL scan",
+    summary="Start one explicitly approved bounded PASSIVE or SAFE URL scan",
 )
 async def create_scan(
     data: ScanJobCreate,
@@ -172,3 +176,55 @@ async def get_scan_findings(
     resolver: ActiveResolver,
 ) -> list[ScanFindingRead]:
     return await ScanService(session, settings, resolver).findings(scan_id)
+
+
+@router.get(
+    "/scans/{scan_id}/tests",
+    response_model=list[ScanTestCaseRead],
+    summary="Get exact SAFE test previews and results",
+)
+async def get_scan_tests(
+    scan_id: UUID,
+    session: Session,
+    settings: ActiveSettings,
+    resolver: ActiveResolver,
+) -> list[ScanTestCaseRead]:
+    return await ScanService(session, settings, resolver).tests(scan_id)
+
+
+@router.post(
+    "/scans/{scan_id}/approve-tests",
+    response_model=ScanTestsApprovalRead,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Approve selected exact SAFE tests",
+)
+async def approve_scan_tests(
+    scan_id: UUID,
+    data: ScanTestsApproval,
+    request: Request,
+    session: Session,
+    settings: ActiveSettings,
+    resolver: ActiveResolver,
+    gate: ActiveGate,
+    sender: ActiveSender,
+) -> ScanTestsApprovalRead:
+    result = await ScanService(session, settings, resolver).approve_tests(
+        scan_id,
+        data,
+        _correlation_id(request),
+    )
+    database: Database = request.app.state.database
+    tasks: ScanTaskRegistry = request.app.state.scan_tasks
+    tasks.continue_after_current(
+        scan_id,
+        run_approved_scan_tests(
+            database,
+            settings,
+            gate,
+            sender,
+            resolver,
+            scan_id,
+            _correlation_id(request),
+        ),
+    )
+    return result

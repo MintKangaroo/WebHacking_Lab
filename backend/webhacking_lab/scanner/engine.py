@@ -24,11 +24,18 @@ from webhacking_lab.database.models import (
     ScanFinding,
     ScanJob,
     ScanParameter,
+    ScanTestCase,
 )
 from webhacking_lab.database.repositories.audit import AuditRepository
 from webhacking_lab.database.repositories.scans import ScanRepository
 from webhacking_lab.database.session import Database
-from webhacking_lab.domain.enums import AuditEventType, ScanStatus, VerificationStatus
+from webhacking_lab.domain.enums import (
+    ActiveTestStatus,
+    AuditEventType,
+    ScannerProfile,
+    ScanStatus,
+    VerificationStatus,
+)
 from webhacking_lab.domain.exceptions import DomainError, ExecutionPolicyError
 from webhacking_lab.http_client.client import SingleHopSender
 from webhacking_lab.http_client.models import NormalizedRequest
@@ -42,11 +49,15 @@ from webhacking_lab.scanner.discovery import (
 )
 from webhacking_lab.scanner.fingerprint import fingerprint_response
 from webhacking_lab.scanner.models import (
+    ActiveEndpoint,
+    ActiveTestPolicy,
     CrawlPolicy,
     DiscoveredEndpoint,
     DiscoveredParameter,
+    ScanContext,
     TechnologyFingerprint,
 )
+from webhacking_lab.scanner.test_planner import plan_safe_tests
 from webhacking_lab.services.http_requests import HttpRequestService
 from webhacking_lab.services.request_execution import RequestExecutionService
 
@@ -207,23 +218,47 @@ class PassiveScanEngine:
                 job,
                 ScanStatus.FINGERPRINTING,
                 "Fingerprinting",
-                0.92,
+                0.68,
                 correlation_id,
             )
             await self._stage(
                 job,
                 ScanStatus.PASSIVE_ANALYSIS,
                 "Passive Analysis",
-                0.96,
+                0.74,
                 correlation_id,
             )
+            if job.profile == ScannerProfile.SAFE:
+                await self._stage(
+                    job,
+                    ScanStatus.PLANNING_ACTIVE_TESTS,
+                    "Planning Active Tests",
+                    0.78,
+                    correlation_id,
+                )
+                planned = await self._plan_active_tests(job, correlation_id)
+                if planned:
+                    job.status = ScanStatus.WAITING_FOR_APPROVAL
+                    job.current_stage = "Waiting for Approval"
+                    job.progress = 0.8
+                    await self._event(
+                        job,
+                        "SAFE test previews are ready. No mutation request has been sent.",
+                        details={"planned_tests": planned},
+                    )
+                    await self._session.commit()
+                    return
             job.status = ScanStatus.COMPLETED
             job.current_stage = "Completed"
             job.progress = 1
             job.finished_at = datetime.now(UTC)
             await self._event(
                 job,
-                "Passive scan completed without generating or executing mutation tests.",
+                (
+                    "SAFE scan completed with no eligible active test candidates."
+                    if job.profile == ScannerProfile.SAFE
+                    else "Passive scan completed without generating mutation tests."
+                ),
                 details={
                     "requests_used": job.requests_used,
                     "findings_count": job.findings_count,
@@ -305,7 +340,9 @@ class PassiveScanEngine:
             if root_candidate is not None:
                 queue.append((root_candidate, 1, "well_known"))
 
-        while queue and pages_fetched < policy.max_pages and job.requests_used < job.request_budget:
+        while (
+            queue and pages_fetched < policy.max_pages and job.requests_used < policy.max_requests
+        ):
             if await self._is_cancelled(job, correlation_id):
                 return
             url, depth, source = queue.popleft()
@@ -348,7 +385,7 @@ class PassiveScanEngine:
                     self._sender,
                     ScopeGuard(self._resolver),
                 )
-                remaining_requests = job.request_budget - job.requests_used
+                remaining_requests = policy.max_requests - job.requests_used
                 maximum_request_count = min(5, remaining_requests)
                 preview = await execution.preview(
                     stored.id,
@@ -428,14 +465,106 @@ class PassiveScanEngine:
                 },
             )
             await self._session.commit()
-        if queue and job.requests_used >= job.request_budget:
+        if queue and job.requests_used >= policy.max_requests:
             await self._event(
                 job,
                 "Scan stopped at the approved request budget.",
                 level="warning",
-                details={"request_budget": job.request_budget},
+                details={"request_budget": policy.max_requests},
             )
             await self._session.commit()
+
+    async def _plan_active_tests(
+        self,
+        job: ScanJob,
+        correlation_id: str | None,
+    ) -> int:
+        """Persist exact SAFE previews without creating or sending HTTP records."""
+
+        active_policy = ActiveTestPolicy.model_validate(
+            job.metadata_json.get("active_test_policy", {})
+        )
+        if not active_policy.enabled:
+            return 0
+        endpoints = await self._scans.list_endpoints(job.id)
+        parameters = await self._scans.list_parameters(job.id)
+        planned_count = 0
+        for endpoint in endpoints:
+            if (
+                planned_count >= active_policy.max_tests
+                or not endpoint.fetched
+                or endpoint.method != "GET"
+                or endpoint.http_request_id is None
+                or endpoint.http_response_id is None
+            ):
+                continue
+            endpoint_parameters = [
+                DiscoveredParameter(
+                    endpoint_url=value.endpoint_url,
+                    name=value.name,
+                    location=value.location,
+                    sample_value=value.sample_value,
+                    source=value.source,
+                )
+                for value in parameters
+                if value.endpoint_url == endpoint.url and value.location == "query"
+            ]
+            remaining_policy = active_policy.model_copy(
+                update={"max_tests": active_policy.max_tests - planned_count}
+            )
+            context = ScanContext(
+                scan_id=job.id,
+                profile=job.profile,
+                active_policy=remaining_policy,
+            )
+            active_endpoint = ActiveEndpoint(
+                url=endpoint.url,
+                method=endpoint.method,
+                parameters=endpoint_parameters,
+                baseline_request_id=endpoint.http_request_id,
+                baseline_response_id=endpoint.http_response_id,
+            )
+            for plan in await plan_safe_tests(active_endpoint, context):
+                test_case = plan.test_case
+                await self._scans.add_test_case(
+                    ScanTestCase(
+                        scan_id=job.id,
+                        plugin_id=plan.plugin.plugin_id,
+                        category=plan.plugin.category.value,
+                        endpoint_url=endpoint.url,
+                        method=plan.normalized_request.method,
+                        title=test_case.title,
+                        objective=test_case.objective,
+                        parameter=test_case.parameter,
+                        mutation_type=test_case.mutation_type,
+                        preview_value=test_case.preview_value,
+                        exact_request_preview=plan.exact_request,
+                        expected_signals_json=test_case.expected_signal,
+                        success_criteria=plan.plugin.success_criteria,
+                        false_positive_notes=plan.plugin.false_positive_notes,
+                        remediation_json=plan.plugin.remediation,
+                        risk_level=test_case.risk_level.value,
+                        maximum_requests=test_case.max_requests,
+                        destructive=test_case.destructive,
+                        requires_confirmation=test_case.requires_confirmation,
+                        status=ActiveTestStatus.PREVIEW,
+                        baseline_request_id=endpoint.http_request_id,
+                        baseline_response_id=endpoint.http_response_id,
+                    )
+                )
+                planned_count += 1
+                if planned_count >= active_policy.max_tests:
+                    break
+        await self._audit.record(
+            AuditEventType.SCAN_TESTS_PLANNED,
+            resource_type="scan_job",
+            resource_id=job.id,
+            project_id=job.project_id,
+            workspace_id=job.workspace_id,
+            correlation_id=correlation_id,
+            details={"planned_tests": planned_count, "requests_sent": 0},
+        )
+        return planned_count
 
     async def _add_parameters(
         self,

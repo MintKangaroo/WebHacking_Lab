@@ -48,6 +48,17 @@ class ScanStatus(StrEnum):
     BLOCKED = "blocked"
 
 
+class ActiveTestStatus(StrEnum):
+    """Approval and execution state for one bounded mutation request."""
+
+    PREVIEW = "preview"
+    APPROVED = "approved"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    INCONCLUSIVE = "inconclusive"
+    BLOCKED = "blocked"
+
+
 class AuditEventType(StrEnum):
     """Auditable state changes."""
 
@@ -77,6 +88,11 @@ class AuditEventType(StrEnum):
     SCAN_CANCELLED = "scan.cancelled"
     SCAN_BLOCKED = "scan.blocked"
     SCAN_FAILED = "scan.failed"
+    SCAN_TESTS_PLANNED = "scan.tests_planned"
+    SCAN_TESTS_APPROVED = "scan.tests_approved"
+    SCAN_TEST_STARTED = "scan.test_started"
+    SCAN_TEST_COMPLETED = "scan.test_completed"
+    SCAN_TEST_BLOCKED = "scan.test_blocked"
 
 
 class VulnerabilityCategory(StrEnum):
@@ -87,6 +103,7 @@ class VulnerabilityCategory(StrEnum):
     JWT = "jwt"
     XSS = "xss"
     SQL_INJECTION = "sql_injection"
+    OPEN_REDIRECT = "open_redirect"
     AUTHENTICATION = "authentication"
 
 

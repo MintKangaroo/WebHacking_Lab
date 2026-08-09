@@ -5,6 +5,7 @@ from collections.abc import Coroutine, Iterator, Sequence
 from contextlib import contextmanager
 from tempfile import TemporaryDirectory
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 from uuid import UUID
 
 from fastapi.testclient import TestClient
@@ -27,6 +28,7 @@ class ScannerSender(SingleHopSender):
 
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.methods: list[str] = []
 
     async def send(
         self,
@@ -38,8 +40,47 @@ class ScannerSender(SingleHopSender):
         expected_hostname: str,
         max_response_bytes: int | None = None,
     ) -> TransportResult:
-        del method, headers, resolved_ips, expected_hostname, max_response_bytes
+        del resolved_ips, expected_hostname, max_response_bytes
         self.calls.append(url)
+        self.methods.append(method)
+        query = parse_qs(urlsplit(url).query)
+        if method == "OPTIONS":
+            origin = next((value for name, value in headers if name.lower() == "origin"), "")
+            return TransportResult(
+                status_code=204,
+                reason="No Content",
+                headers=[
+                    ("Access-Control-Allow-Origin", origin),
+                    ("Access-Control-Allow-Credentials", "true"),
+                ],
+                body=b"",
+                elapsed_ms=1,
+            )
+        if any(value.endswith("'") for values in query.values() for value in values):
+            return TransportResult(
+                status_code=500,
+                reason="Internal Server Error",
+                headers=[("Content-Type", "text/html")],
+                body=b"sqlite3.OperationalError: near quote: syntax error",
+                elapsed_ms=2,
+            )
+        redirect = next(
+            (
+                value
+                for name in ("next", "url", "redirect", "return_to")
+                for value in query.get(name, [])
+                if value.startswith("https://example.invalid/")
+            ),
+            None,
+        )
+        if redirect:
+            return TransportResult(
+                status_code=302,
+                reason="Found",
+                headers=[("Content-Type", "text/plain"), ("Location", redirect)],
+                body=b"redirect",
+                elapsed_ms=1,
+            )
         if url.endswith("/robots.txt"):
             return TransportResult(
                 status_code=200,
@@ -93,7 +134,8 @@ class ScannerSender(SingleHopSender):
                 b"<a href='/next?id=7&token=secret'>Next</a>"
                 b"<form action='/search' method='get'><input name='q'></form>"
                 b"<script>fetch('/api/items?page=2')</script>"
-                b"</body></html>"
+                + f"<p>{url}</p>".encode()
+                + b"</body></html>"
             ),
             elapsed_ms=2,
         )
@@ -218,7 +260,7 @@ def test_passive_scan_builds_inventory_findings_and_audit_without_secret_replay(
         assert any(item["correlation_id"] == "passive-scan-test" for item in audits)
 
 
-def test_scanner_rejects_out_of_scope_and_non_passive_profiles() -> None:
+def test_scanner_rejects_out_of_scope_and_unsupported_profiles() -> None:
     with scanner_client() as (client, sender):
         project_id, workspace_id = _prepare_target(client)
         blocked = client.post(
@@ -232,10 +274,160 @@ def test_scanner_rejects_out_of_scope_and_non_passive_profiles() -> None:
             workspace_id,
             "https://authorized.example/",
         )
-        active_payload["profile"] = "safe"
+        active_payload["profile"] = "ctf"
         active = client.post("/api/scans", json=active_payload)
         assert active.status_code == 403
         assert sender.calls == []
+
+
+def test_safe_scan_stops_for_exact_approval_then_records_runtime_evidence() -> None:
+    with scanner_client() as (client, sender):
+        project_id, workspace_id = _prepare_target(client)
+        payload = _scan_payload(
+            project_id,
+            workspace_id,
+            "https://authorized.example/?id=1&next=%2Fhome",
+        )
+        payload.update(
+            {
+                "profile": "safe",
+                "confirmation_phrase": "START SAFE SCAN",
+                "active_test_policy": {
+                    "enabled": True,
+                    "max_tests": 6,
+                    "max_tests_per_parameter": 6,
+                    "allow_limited_timing": False,
+                },
+            }
+        )
+        created = client.post(
+            "/api/scans",
+            json=payload,
+            headers={"X-Correlation-ID": "safe-scan-test"},
+        )
+        assert created.status_code == 202, created.text
+        scan_id = created.json()["id"]
+        for _ in range(600):
+            job = client.get(f"/api/scans/{scan_id}").json()
+            if job["status"] == "waiting_for_approval":
+                break
+            time.sleep(0.01)
+        else:
+            raise AssertionError("SAFE scan did not stop for approval")
+        assert sender.calls == ["https://authorized.example/?id=1&next=%2Fhome"]
+        assert job["planned_tests_count"] == 6
+        assert job["requests_used"] == 1
+
+        tests = client.get(f"/api/scans/{scan_id}/tests").json()
+        assert {item["plugin_id"] for item in tests} == {
+            "safe-sql-injection",
+            "safe-reflected-xss",
+            "safe-open-redirect",
+            "safe-cors-probe",
+        }
+        assert all(item["status"] == "preview" for item in tests)
+        assert all(item["maximum_requests"] == 1 for item in tests)
+        assert not any(item["destructive"] for item in tests)
+        assert any("WHL_REFLECTION_PROBE" in item["exact_request_preview"] for item in tests)
+
+        selected = [
+            item["id"]
+            for item in tests
+            if item["mutation_type"]
+            in {
+                "sql_quote_append",
+                "xss_inert_marker",
+                "open_redirect_reserved_domain",
+                "cors_reserved_origin",
+            }
+        ]
+        approved = client.post(
+            f"/api/scans/{scan_id}/approve-tests",
+            json={
+                "test_ids": selected,
+                "authorization_confirmed": True,
+                "confirmation_phrase": "APPROVE SELECTED SAFE TESTS",
+            },
+        )
+        assert approved.status_code == 202, approved.text
+        terminal = _wait_for_terminal(client, scan_id)
+        assert terminal["status"] == "completed"
+        assert terminal["requests_used"] == 5
+        assert len(sender.calls) == 5
+        assert sender.methods.count("OPTIONS") == 1
+
+        completed_tests = client.get(f"/api/scans/{scan_id}/tests").json()
+        approved_rows = [item for item in completed_tests if item["id"] in selected]
+        assert all(item["status"] == "completed" for item in approved_rows)
+        assert all(item["result_status"] in {"confirmed", "likely"} for item in approved_rows)
+        assert sum(item["status"] == "preview" for item in completed_tests) == 2
+        findings = client.get(f"/api/scans/{scan_id}/findings").json()
+        analyzers = {item["analyzer"] for item in findings}
+        assert {
+            "safe-sql-injection",
+            "safe-reflected-xss",
+            "safe-open-redirect",
+            "safe-cors-probe",
+        } <= analyzers
+        audits = client.get("/api/audit-events?limit=100").json()
+        audit_types = {item["event_type"] for item in audits}
+        assert "scan.tests_planned" in audit_types
+        assert "scan.tests_approved" in audit_types
+        assert "scan.test_completed" in audit_types
+
+
+def test_safe_test_approval_rejects_foreign_and_duplicate_ids() -> None:
+    with scanner_client() as (client, _sender):
+        project_id, workspace_id = _prepare_target(client)
+        payload = _scan_payload(
+            project_id,
+            workspace_id,
+            "https://authorized.example/?id=1",
+        )
+        payload.update(
+            {
+                "profile": "safe",
+                "confirmation_phrase": "START SAFE SCAN",
+                "active_test_policy": {"enabled": True, "max_tests": 2},
+            }
+        )
+        created = client.post("/api/scans", json=payload)
+        scan_id = created.json()["id"]
+        for _ in range(600):
+            if client.get(f"/api/scans/{scan_id}").json()["status"] == "waiting_for_approval":
+                break
+            time.sleep(0.01)
+        tests = client.get(f"/api/scans/{scan_id}/tests").json()
+        duplicate = client.post(
+            f"/api/scans/{scan_id}/approve-tests",
+            json={
+                "test_ids": [tests[0]["id"], tests[0]["id"]],
+                "authorization_confirmed": True,
+                "confirmation_phrase": "APPROVE SELECTED SAFE TESTS",
+            },
+        )
+        assert duplicate.status_code == 422
+        foreign = client.post(
+            f"/api/scans/{scan_id}/approve-tests",
+            json={
+                "test_ids": ["99999999-9999-4999-8999-999999999999"],
+                "authorization_confirmed": True,
+                "confirmation_phrase": "APPROVE SELECTED SAFE TESTS",
+            },
+        )
+        assert foreign.status_code == 403
+        cancelled = client.post(f"/api/scans/{scan_id}/cancel")
+        assert cancelled.status_code == 200
+        assert cancelled.json()["status"] == "cancelled"
+        after_cancel = client.post(
+            f"/api/scans/{scan_id}/approve-tests",
+            json={
+                "test_ids": [tests[0]["id"]],
+                "authorization_confirmed": True,
+                "confirmation_phrase": "APPROVE SELECTED SAFE TESTS",
+            },
+        )
+        assert after_cancel.status_code == 409
 
 
 def test_scanner_can_cancel_a_queued_job_before_first_request() -> None:

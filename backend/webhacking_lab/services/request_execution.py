@@ -49,6 +49,7 @@ SAFE_REQUEST_HEADERS = frozenset(
         "accept",
         "accept-encoding",
         "accept-language",
+        "access-control-request-method",
         "cache-control",
         "if-modified-since",
         "if-none-match",
@@ -124,6 +125,7 @@ def _approval_token(
     decision: ScopeDecision,
     maximum_request_count: int,
     max_response_bytes: int,
+    follow_redirects: bool,
 ) -> str:
     material = "\n".join(
         (
@@ -133,6 +135,7 @@ def _approval_token(
             str(decision.matched_rule_id),
             str(maximum_request_count),
             str(max_response_bytes),
+            str(follow_redirects),
             exact_request,
         )
     )
@@ -226,6 +229,7 @@ class RequestExecutionService:
         rules: list[ScopeRule],
         maximum_request_count: int,
         max_response_bytes: int,
+        follow_redirects: bool,
     ) -> tuple[RequestExecutionPreview, NormalizedRequest]:
         self._check_server_policy()
         if not workspace.network_execution_enabled:
@@ -243,8 +247,12 @@ class RequestExecutionService:
             exact_request=exact_request,
             expected_impact=(
                 "Read-only retrieval with no request body or stored credentials; redirects are "
-                "followed only after the same full safety check, up to "
-                f"{maximum_request_count} total request(s), with at most "
+                + (
+                    "followed only after the same full safety check, up to "
+                    if follow_redirects
+                    else "not followed; "
+                )
+                + f"{maximum_request_count} total request(s), with at most "
                 f"{max_response_bytes} response bytes per request."
             ),
             maximum_request_count=maximum_request_count,
@@ -257,6 +265,7 @@ class RequestExecutionService:
                 decision,
                 maximum_request_count,
                 max_response_bytes,
+                follow_redirects,
             ),
             warnings=warnings,
         )
@@ -269,6 +278,7 @@ class RequestExecutionService:
         *,
         maximum_request_count: int = MAX_REQUESTS_PER_APPROVAL,
         max_response_bytes: int | None = None,
+        follow_redirects: bool = True,
     ) -> RequestExecutionPreview:
         """Return and audit the exact initial request plus maximum redirect budget."""
 
@@ -288,6 +298,7 @@ class RequestExecutionService:
                 rules,
                 maximum_request_count,
                 response_limit,
+                follow_redirects,
             )
         except ExecutionPolicyError as error:
             await self._record_blocked(request, workspace, correlation_id, str(error))
@@ -311,6 +322,7 @@ class RequestExecutionService:
         *,
         maximum_request_count: int = MAX_REQUESTS_PER_APPROVAL,
         max_response_bytes: int | None = None,
+        follow_redirects: bool = True,
     ) -> RequestExecutionResult:
         """Execute the approved request chain, rechecking every redirect before use."""
 
@@ -330,6 +342,7 @@ class RequestExecutionService:
                 rules,
                 maximum_request_count,
                 response_limit,
+                follow_redirects,
             )
             if request.version != approval.request_version:
                 raise ConflictError("Request was modified after the approval preview")
@@ -387,6 +400,8 @@ class RequestExecutionService:
                     None,
                 )
                 if final_result.status_code not in REDIRECT_STATUSES or location is None:
+                    break
+                if not follow_redirects:
                     break
                 next_url = urljoin(current_url, location)
                 next_decision, _ = await self._scope_decision(next_url, workspace, rules)
