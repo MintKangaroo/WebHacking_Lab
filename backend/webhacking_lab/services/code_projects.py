@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import UTC, datetime
+from itertools import pairwise
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -9,7 +10,12 @@ from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from webhacking_lab.core.config import Settings
-from webhacking_lab.database.models import CodeFile, CodeProject, StaticRouteRecord
+from webhacking_lab.database.models import (
+    CodeFile,
+    CodeProject,
+    StaticFindingRecord,
+    StaticRouteRecord,
+)
 from webhacking_lab.database.repositories.audit import AuditRepository
 from webhacking_lab.database.repositories.code_projects import CodeProjectRepository
 from webhacking_lab.database.repositories.projects import ProjectRepository
@@ -32,13 +38,19 @@ from webhacking_lab.static_analysis.models import (
     CodeProjectRead,
     CodeUploadRead,
     IndexedFile,
+    StaticCodeFinding,
+    StaticDataFlow,
+    StaticFlowEdge,
+    StaticFlowStep,
     StaticParameter,
+    StaticRemediation,
     StaticRoute,
     UploadPolicy,
 )
 from webhacking_lab.static_analysis.project_detector import detect_project
 from webhacking_lab.static_analysis.route_extractor import extract_routes
 from webhacking_lab.static_analysis.secret_scanner import redact_source
+from webhacking_lab.static_analysis.taint_engine import analyze_static_data_flows
 
 MAX_EDITOR_BYTES = 500_000
 
@@ -103,6 +115,50 @@ def _route_read(route: StaticRouteRecord, file_path: str) -> StaticRoute:
         authentication=AuthenticationInfo.model_validate(route.authentication_json),
         findings=route.findings_json,
     )
+
+
+def _finding_read(
+    finding: StaticFindingRecord,
+    file_path: str,
+    route_path: str | None,
+) -> StaticCodeFinding:
+    return StaticCodeFinding(
+        id=finding.id,
+        code_project_id=finding.code_project_id,
+        code_file_id=finding.code_file_id,
+        static_route_id=finding.static_route_id,
+        file_path=file_path,
+        route=route_path,
+        route_handler=finding.route_handler,
+        category=finding.category,
+        title=finding.title,
+        status=finding.status,
+        severity=finding.severity,
+        confidence=finding.confidence,
+        source_label=finding.source_label,
+        sink_label=finding.sink_label,
+        parameter=finding.parameter,
+        source_line=finding.source_line,
+        sink_line=finding.sink_line,
+        sanitizers=finding.sanitizers_json,
+        evidence=finding.evidence_json,
+        remediation=StaticRemediation.model_validate(finding.remediation_json),
+        limitations=finding.limitations_json,
+    )
+
+
+def _flow_read(finding: StaticFindingRecord) -> StaticDataFlow:
+    nodes = [StaticFlowStep.model_validate(value) for value in finding.flow_steps_json]
+    edges = [
+        StaticFlowEdge(
+            id=f"edge-{index}",
+            source=source.id,
+            target=target.id,
+            label="flows to",
+        )
+        for index, (source, target) in enumerate(pairwise(nodes))
+    ]
+    return StaticDataFlow(finding_id=finding.id, nodes=nodes, edges=edges)
 
 
 class CodeProjectService:
@@ -284,7 +340,7 @@ class CodeProjectService:
         code_project_id: UUID,
         correlation_id: str | None,
     ) -> CodeAnalysisRead:
-        """Parse routes only; uploaded code and dependencies are never run."""
+        """Extract routes and bounded source-to-sink traces without running code."""
 
         project = await self._require_project(code_project_id)
         if project.status == CodeProjectStatus.EMPTY:
@@ -311,34 +367,91 @@ class CodeProjectService:
                 indexed,
                 project.frameworks_json,
             )
+            taint = await asyncio.to_thread(
+                analyze_static_data_flows,
+                root,
+                indexed,
+                extraction.routes,
+            )
             by_path = {value.relative_path: value for value in records}
             for value in records:
                 value.route_count = 0
             route_records: list[StaticRouteRecord] = []
-            for route in extraction.routes:
-                file = by_path[route.file_path]
-                file.route_count += 1
+            for extracted_route in extraction.routes:
+                code_file = by_path[extracted_route.file_path]
+                code_file.route_count += 1
                 route_records.append(
                     StaticRouteRecord(
                         code_project_id=project.id,
-                        code_file_id=file.id,
-                        framework=route.framework,
-                        methods_json=route.methods,
-                        path=route.path,
-                        handler_name=route.handler_name,
-                        line_start=route.line_start,
-                        line_end=route.line_end,
+                        code_file_id=code_file.id,
+                        framework=extracted_route.framework,
+                        methods_json=extracted_route.methods,
+                        path=extracted_route.path,
+                        handler_name=extracted_route.handler_name,
+                        line_start=extracted_route.line_start,
+                        line_end=extracted_route.line_end,
                         parameters_json=[
-                            value.model_dump(mode="json") for value in route.parameters
+                            value.model_dump(mode="json") for value in extracted_route.parameters
                         ],
-                        authentication_json=route.authentication.model_dump(mode="json"),
-                        findings_json=route.findings,
+                        authentication_json=extracted_route.authentication.model_dump(mode="json"),
+                        findings_json=extracted_route.findings,
                     )
                 )
             await self._codes.replace_routes(project.id, route_records)
+            route_by_handler = {
+                (value.code_file_id, value.handler_name): value for value in route_records
+            }
+            finding_records: list[StaticFindingRecord] = []
+            for extracted_finding in taint.findings:
+                finding_file = by_path.get(extracted_finding.file_path)
+                if finding_file is None:
+                    continue
+                static_route = route_by_handler.get(
+                    (finding_file.id, extracted_finding.route_handler or "")
+                )
+                finding_records.append(
+                    StaticFindingRecord(
+                        code_project_id=project.id,
+                        code_file_id=finding_file.id,
+                        static_route_id=static_route.id if static_route is not None else None,
+                        category=extracted_finding.category.value,
+                        title=extracted_finding.title,
+                        status=extracted_finding.status.value,
+                        severity=extracted_finding.severity.value,
+                        confidence=extracted_finding.confidence,
+                        route_handler=extracted_finding.route_handler,
+                        source_label=extracted_finding.source_label,
+                        sink_label=extracted_finding.sink_label,
+                        parameter=extracted_finding.parameter,
+                        source_line=extracted_finding.source_line,
+                        sink_line=extracted_finding.sink_line,
+                        sanitizers_json=extracted_finding.sanitizers,
+                        evidence_json=extracted_finding.evidence,
+                        flow_steps_json=[
+                            value.model_dump(mode="json") for value in extracted_finding.flow_steps
+                        ],
+                        remediation_json=extracted_finding.remediation.model_dump(mode="json"),
+                        limitations_json=extracted_finding.limitations,
+                    )
+                )
+            await self._codes.replace_findings(project.id, finding_records)
+            finding_ids_by_route: dict[UUID, list[str]] = {}
+            for finding_record in finding_records:
+                if finding_record.static_route_id is not None:
+                    finding_ids_by_route.setdefault(finding_record.static_route_id, []).append(
+                        str(finding_record.id)
+                    )
+            for route_record in route_records:
+                route_record.findings_json = finding_ids_by_route.get(route_record.id, [])
             project.status = CodeProjectStatus.COMPLETED
             project.analyzed_at = datetime.now(UTC)
-            project.warnings_json = sorted({*project.warnings_json, *extraction.warnings})[:100]
+            project.warnings_json = sorted(
+                {*project.warnings_json, *extraction.warnings, *taint.warnings}
+            )[:100]
+            project.metadata_json = {
+                **project.metadata_json,
+                "static_safe_decisions": taint.safe_decisions,
+            }
             project.version += 1
             await self._audit.record(
                 AuditEventType.CODE_PROJECT_ANALYZED,
@@ -346,7 +459,12 @@ class CodeProjectService:
                 resource_id=project.id,
                 project_id=project.project_id,
                 correlation_id=correlation_id,
-                details={"routes": len(route_records), "code_executed": False},
+                details={
+                    "routes": len(route_records),
+                    "static_candidates": len(finding_records),
+                    "safe_decisions": len(taint.safe_decisions),
+                    "code_executed": False,
+                },
             )
             await self._session.commit()
             return await self.analysis(code_project_id)
@@ -368,24 +486,45 @@ class CodeProjectService:
     async def analysis(self, code_project_id: UUID) -> CodeAnalysisRead:
         project = await self._require_project(code_project_id)
         routes = await self.routes(code_project_id)
+        findings = await self.findings(code_project_id)
+        safe_decisions = project.metadata_json.get("static_safe_decisions", [])
         log = [
             "Upload treated as untrusted input; no code or dependency was executed.",
             f"Indexed {project.total_files} supported text files ({project.total_bytes} bytes).",
             "Detected "
             f"{len(project.frameworks_json)} framework signal(s) and {len(routes)} route(s).",
+            f"Produced {len(findings)} source-only candidate(s); none are runtime-confirmed.",
         ]
+        if isinstance(safe_decisions, list):
+            log.extend(str(value) for value in safe_decisions[:20])
         return CodeAnalysisRead(
             project=_project_read(project),
             routes=routes,
             analysis_log=log,
             limitations=[
-                "Phase 10 extracts Python decorator routes and conservative Plain PHP "
-                "file endpoints.",
-                "Dynamic route construction, included routers, and middleware can require "
-                "manual review.",
-                "Source-to-Sink and taint analysis are introduced in Phase 11.",
+                "Phase 11 uses intra-procedural Python AST and conservative PHP lexical flows.",
+                "Dynamic dispatch, included routers, aliases, middleware, and implicit framework "
+                "sanitizers can require manual review.",
+                "Static candidates are not Runtime Confirmed and no generated request is sent.",
             ],
         )
+
+    async def findings(self, code_project_id: UUID) -> list[StaticCodeFinding]:
+        project = await self._require_project(code_project_id)
+        files = {value.id: value.relative_path for value in project.files}
+        routes = {value.id: value.path for value in await self._codes.list_routes(code_project_id)}
+        return [
+            _finding_read(
+                value,
+                files.get(value.code_file_id, "unavailable"),
+                routes.get(value.static_route_id) if value.static_route_id is not None else None,
+            )
+            for value in await self._codes.list_findings(code_project_id)
+        ]
+
+    async def data_flows(self, code_project_id: UUID) -> list[StaticDataFlow]:
+        await self._require_project(code_project_id)
+        return [_flow_read(value) for value in await self._codes.list_findings(code_project_id)]
 
     async def _require_project(self, code_project_id: UUID) -> CodeProject:
         project = await self._codes.get(code_project_id)

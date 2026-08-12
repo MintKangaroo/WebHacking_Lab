@@ -2,6 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
+.monaco-editor .static-source-line {
+  background: rgb(34 211 238 / 8%);
+  border-left: 2px solid rgb(34 211 238 / 70%);
+}
+
+.monaco-editor .static-sink-line {
+  background: rgb(239 68 68 / 10%);
+  border-left: 2px solid rgb(239 68 68 / 75%);
+}
+
 :root {
   color-scheme: dark;
   font-family: Inter, Pretendard, ui-sans-serif, system-ui, sans-serif;

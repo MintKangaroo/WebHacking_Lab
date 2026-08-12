@@ -10,6 +10,7 @@ const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } });
 const suffix = Date.now();
 const projectName = `Authorized CTF Review ${suffix}`;
+const codeAnalysisOnly = process.env.SCREENSHOT_TARGET === "code-analysis";
 
 const projectResponse = await page.request.post(`${baseURL}/api/projects`, {
   data: {
@@ -21,7 +22,9 @@ const projectResponse = await page.request.post(`${baseURL}/api/projects`, {
 if (!projectResponse.ok()) throw new Error(await projectResponse.text());
 const project = await projectResponse.json();
 const workspace = project.workspaces[0];
+let plannedTestsCount = 0;
 
+if (!codeAnalysisOnly) {
 const scopeResponse = await page.request.post(
   `${baseURL}/api/projects/${project.id}/scope`,
   {
@@ -101,7 +104,6 @@ const scanResponse = await page.request.post(`${baseURL}/api/scans`, {
 });
 if (!scanResponse.ok()) throw new Error(await scanResponse.text());
 const scan = await scanResponse.json();
-let plannedTestsCount = 0;
 for (let attempt = 0; attempt < 40; attempt += 1) {
   const statusResponse = await page.request.get(`${baseURL}/api/scans/${scan.id}`);
   if (!statusResponse.ok()) throw new Error(await statusResponse.text());
@@ -111,6 +113,7 @@ for (let attempt = 0; attempt < 40; attempt += 1) {
     break;
   }
   await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+}
 }
 
 const codeProjectResponse = await page.request.post(`${baseURL}/api/code-projects`, {
@@ -133,8 +136,9 @@ API_KEY = "screenshot-demo-secret"
 @app.route("/product/<int:item_id>", methods=["GET"])
 @login_required
 def product(item_id):
-    query = request.args.get("q")
-    return {"item_id": item_id, "query": query}
+    name = request.args.get("q", "")
+    query = f"SELECT * FROM products WHERE name = '{name}'"
+    return cursor.execute(query)
 `;
 const codeUploadResponse = await page.request.post(`${baseURL}/api/code-projects/upload`, {
   multipart: {
@@ -152,9 +156,11 @@ const codeAnalysisResponse = await page.request.post(
 );
 if (!codeAnalysisResponse.ok()) throw new Error(await codeAnalysisResponse.text());
 
-await page.goto(`${baseURL}/`);
-await page.getByRole("heading", { name: "Security analysis, under control." }).waitFor();
-await page.screenshot({ path: resolve(screenshotDirectory, "dashboard.png"), fullPage: true });
+if (!codeAnalysisOnly) {
+  await page.goto(`${baseURL}/`);
+  await page.getByRole("heading", { name: "Security analysis, under control." }).waitFor();
+  await page.screenshot({ path: resolve(screenshotDirectory, "dashboard.png"), fullPage: true });
+}
 
 await page.goto(`${baseURL}/code-analysis`);
 await page.getByLabel("Parent project").selectOption({ label: projectName });
@@ -164,11 +170,17 @@ await page.getByText("/product/<int:item_id>").waitFor();
 await page.getByRole("button", { name: /GET.*product/ }).click();
 await page.getByText(/product · app.py:8/).waitFor();
 await page.getByText(/redacted-secret/).first().waitFor({ timeout: 15000 });
+await page.getByText("Potential SQL Injection").first().click();
+await page.getByLabel("Source-to-Sink data flow").waitFor();
+await page.getByText("Safe remediation diff").waitFor();
 await page.screenshot({
   path: resolve(screenshotDirectory, "code-analysis.png"),
   fullPage: true,
 });
 
+if (codeAnalysisOnly) {
+  await browser.close();
+} else {
 await page.goto(`${baseURL}/projects/${project.id}`);
 await page.getByText("Scope registry").waitFor();
 await page.screenshot({
@@ -254,3 +266,4 @@ await page.locator(".react-flow").screenshot({
 });
 
 await browser.close();
+}

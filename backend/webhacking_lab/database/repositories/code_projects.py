@@ -6,7 +6,12 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from webhacking_lab.database.models import CodeFile, CodeProject, StaticRouteRecord
+from webhacking_lab.database.models import (
+    CodeFile,
+    CodeProject,
+    StaticFindingRecord,
+    StaticRouteRecord,
+)
 
 
 class CodeProjectRepository:
@@ -27,6 +32,7 @@ class CodeProjectRepository:
             .options(
                 selectinload(CodeProject.files),
                 selectinload(CodeProject.routes),
+                selectinload(CodeProject.static_findings),
             )
         )
         return project
@@ -35,7 +41,11 @@ class CodeProjectRepository:
         statement = (
             select(CodeProject)
             .where(CodeProject.deleted_at.is_(None))
-            .options(selectinload(CodeProject.files), selectinload(CodeProject.routes))
+            .options(
+                selectinload(CodeProject.files),
+                selectinload(CodeProject.routes),
+                selectinload(CodeProject.static_findings),
+            )
             .order_by(CodeProject.updated_at.desc())
         )
         if project_id is not None:
@@ -65,6 +75,11 @@ class CodeProjectRepository:
         routes: list[StaticRouteRecord],
     ) -> None:
         await self._session.execute(
+            delete(StaticFindingRecord).where(
+                StaticFindingRecord.code_project_id == code_project_id
+            )
+        )
+        await self._session.execute(
             delete(StaticRouteRecord).where(StaticRouteRecord.code_project_id == code_project_id)
         )
         self._session.add_all(routes)
@@ -75,5 +90,30 @@ class CodeProjectRepository:
             select(StaticRouteRecord)
             .where(StaticRouteRecord.code_project_id == code_project_id)
             .order_by(StaticRouteRecord.path, StaticRouteRecord.line_start)
+        )
+        return list(result)
+
+    async def replace_findings(
+        self,
+        code_project_id: UUID,
+        findings: list[StaticFindingRecord],
+    ) -> None:
+        await self._session.execute(
+            delete(StaticFindingRecord).where(
+                StaticFindingRecord.code_project_id == code_project_id
+            )
+        )
+        self._session.add_all(findings)
+        await self._session.flush()
+
+    async def list_findings(self, code_project_id: UUID) -> list[StaticFindingRecord]:
+        result = await self._session.scalars(
+            select(StaticFindingRecord)
+            .where(StaticFindingRecord.code_project_id == code_project_id)
+            .order_by(
+                StaticFindingRecord.code_file_id,
+                StaticFindingRecord.source_line,
+                StaticFindingRecord.sink_line,
+            )
         )
         return list(result)

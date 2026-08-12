@@ -1,6 +1,15 @@
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Background,
+  Controls,
+  Position,
+  ReactFlow,
+  type Edge,
+  type Node,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import {
   AlertTriangle,
   Braces,
   CheckCircle2,
@@ -8,6 +17,7 @@ import {
   FileArchive,
   FileCode2,
   FolderTree,
+  GitBranch,
   KeyRound,
   LoaderCircle,
   LockKeyhole,
@@ -15,6 +25,7 @@ import {
   Route,
   Search,
   ShieldCheck,
+  ShieldAlert,
   Upload,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
@@ -24,8 +35,10 @@ import {
   analyzeCodeProject,
   createCodeProject,
   getCodeAnalysis,
+  getCodeDataFlows,
   getCodeFile,
   getCodeFiles,
+  getCodeFindings,
   getCodeProjects,
   getCodeRoutes,
   uploadCodeProject,
@@ -34,7 +47,12 @@ import { getProjects } from "../api/projects";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import type { CodeProject, StaticRoute } from "../types/resources";
+import type {
+  CodeProject,
+  StaticCodeFinding,
+  StaticDataFlow,
+  StaticRoute,
+} from "../types/resources";
 import { cn } from "../utils/cn";
 
 const fieldClass =
@@ -51,6 +69,48 @@ function statusTone(status: CodeProject["status"]) {
   if (status === "failed") return "critical" as const;
   if (status === "analyzing") return "accent" as const;
   return "warning" as const;
+}
+
+function findingTone(severity: StaticCodeFinding["severity"]) {
+  if (severity === "high" || severity === "critical") return "critical" as const;
+  if (severity === "medium") return "warning" as const;
+  return "accent" as const;
+}
+
+const flowColors: Record<StaticDataFlow["nodes"][number]["kind"], string> = {
+  source: "#22d3ee",
+  transformation: "#8b5cf6",
+  sanitizer: "#10b981",
+  sink: "#ef4444",
+};
+
+function flowElements(flow: StaticDataFlow | undefined) {
+  const nodes: Node[] =
+    flow?.nodes.map((value, index) => ({
+      id: value.id,
+      position: { x: index * 235, y: index % 2 === 0 ? 55 : 155 },
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
+      data: { label: `${value.label}\nline ${value.line}` },
+      style: {
+        width: 190,
+        border: `1px solid ${flowColors[value.kind]}66`,
+        borderRadius: 10,
+        background: "#0b111b",
+        color: "#dbeafe",
+        fontFamily: "JetBrains Mono, monospace",
+        fontSize: 11,
+        whiteSpace: "pre-line",
+      },
+    })) ?? [];
+  const edges: Edge[] =
+    flow?.edges.map((value) => ({
+      ...value,
+      animated: true,
+      style: { stroke: "#64748b" },
+      labelStyle: { fill: "#64748b", fontSize: 9 },
+    })) ?? [];
+  return { nodes, edges };
 }
 
 function UploadPanel({
@@ -181,6 +241,8 @@ export function CodeAnalysisPage() {
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedFileId, setSelectedFileId] = useState("");
   const [selectedRouteId, setSelectedRouteId] = useState("");
+  const [selectedFindingId, setSelectedFindingId] = useState("");
+  const [editorReady, setEditorReady] = useState(false);
   const [filter, setFilter] = useState("");
 
   const parents = useQuery({ queryKey: ["projects"], queryFn: ({ signal }) => getProjects(signal) });
@@ -205,6 +267,16 @@ export function CodeAnalysisPage() {
     queryFn: ({ signal }) => getCodeRoutes(effectiveProjectId, signal),
     enabled: Boolean(effectiveProjectId),
   });
+  const findings = useQuery({
+    queryKey: ["code-findings", effectiveProjectId],
+    queryFn: ({ signal }) => getCodeFindings(effectiveProjectId, signal),
+    enabled: Boolean(effectiveProjectId && selectedProject?.status === "completed"),
+  });
+  const flows = useQuery({
+    queryKey: ["code-data-flows", effectiveProjectId],
+    queryFn: ({ signal }) => getCodeDataFlows(effectiveProjectId, signal),
+    enabled: Boolean(effectiveProjectId && selectedProject?.status === "completed"),
+  });
   const effectiveFileId =
     files.data?.find((value) => value.id === selectedFileId)?.id ?? files.data?.[0]?.id ?? "";
   const file = useQuery({
@@ -218,6 +290,11 @@ export function CodeAnalysisPage() {
     enabled: Boolean(effectiveProjectId && selectedProject?.status === "completed"),
   });
   const selectedRoute = routes.data?.find((value) => value.id === selectedRouteId);
+  const effectiveFindingId =
+    findings.data?.find((value) => value.id === selectedFindingId)?.id ?? "";
+  const selectedFinding = findings.data?.find((value) => value.id === effectiveFindingId);
+  const selectedFlow = flows.data?.find((value) => value.finding_id === effectiveFindingId);
+  const graph = useMemo(() => flowElements(selectedFlow), [selectedFlow]);
 
   const analyze = useMutation({
     mutationFn: () => analyzeCodeProject(effectiveProjectId),
@@ -227,15 +304,44 @@ export function CodeAnalysisPage() {
         queryClient.invalidateQueries({ queryKey: ["code-routes", effectiveProjectId] }),
         queryClient.invalidateQueries({ queryKey: ["code-files", effectiveProjectId] }),
         queryClient.invalidateQueries({ queryKey: ["code-analysis", effectiveProjectId] }),
+        queryClient.invalidateQueries({ queryKey: ["code-findings", effectiveProjectId] }),
+        queryClient.invalidateQueries({ queryKey: ["code-data-flows", effectiveProjectId] }),
       ]);
-      toast.success(`${result.routes.length} static routes extracted`);
+      setSelectedFindingId("");
+      toast.success(`${result.routes.length} routes and static data flows analyzed`);
     },
     onError: (error: Error) => toast.error(error.message),
   });
 
   useEffect(() => {
-    if (selectedRoute) editorRef.current?.revealLineInCenter(selectedRoute.line_start);
-  }, [selectedRoute, file.data]);
+    const editor = editorRef.current;
+    if (!editor) return;
+    if (selectedFinding && effectiveFileId === selectedFinding.code_file_id) {
+      editor.revealLineInCenter(selectedFinding.sink_line);
+      const decorations = editor.createDecorationsCollection([
+        {
+          range: {
+            startLineNumber: selectedFinding.source_line,
+            startColumn: 1,
+            endLineNumber: selectedFinding.source_line,
+            endColumn: 1,
+          },
+          options: { isWholeLine: true, className: "static-source-line" },
+        },
+        {
+          range: {
+            startLineNumber: selectedFinding.sink_line,
+            startColumn: 1,
+            endLineNumber: selectedFinding.sink_line,
+            endColumn: 1,
+          },
+          options: { isWholeLine: true, className: "static-sink-line" },
+        },
+      ]);
+      return () => decorations.clear();
+    }
+    if (selectedRoute) editor.revealLineInCenter(selectedRoute.line_start);
+  }, [editorReady, effectiveFileId, file.data, selectedFinding, selectedRoute]);
 
   const filteredFiles = useMemo(
     () =>
@@ -244,10 +350,24 @@ export function CodeAnalysisPage() {
       ) ?? [],
     [files.data, filter],
   );
+  const findingCountByFile = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const value of findings.data ?? []) {
+      counts.set(value.code_file_id, (counts.get(value.code_file_id) ?? 0) + 1);
+    }
+    return counts;
+  }, [findings.data]);
 
   const selectRoute = (route: StaticRoute) => {
     setSelectedRouteId(route.id);
+    setSelectedFindingId("");
     setSelectedFileId(route.code_file_id);
+  };
+
+  const selectFinding = (finding: StaticCodeFinding) => {
+    setSelectedFindingId(finding.id);
+    setSelectedFileId(finding.code_file_id);
+    setSelectedRouteId(finding.static_route_id ?? "");
   };
 
   return (
@@ -255,12 +375,12 @@ export function CodeAnalysisPage() {
       <header className="flex flex-col justify-between gap-4 xl:flex-row xl:items-end">
         <div>
           <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-cyan-400/70">
-            Phase 10 · inert static inventory
+            Phase 11 · source-to-sink analysis
           </p>
           <h1 className="mt-2 text-2xl font-semibold text-slate-50">Code Analysis</h1>
           <p className="mt-1 max-w-3xl text-sm text-slate-500">
-            Upload untrusted source, identify frameworks, and map routes to code without running
-            the project or installing dependencies.
+            Trace authorized source input to sensitive sinks, inspect limitations, and compare safe
+            remediation without running the project or installing dependencies.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -298,6 +418,7 @@ export function CodeAnalysisPage() {
                 setSelectedProjectId(event.target.value);
                 setSelectedFileId("");
                 setSelectedRouteId("");
+                setSelectedFindingId("");
               }}
             >
               {!projects.data?.length && <option value="">No source projects</option>}
@@ -324,6 +445,7 @@ export function CodeAnalysisPage() {
                 onClick={() => {
                   setSelectedFileId(value.id);
                   setSelectedRouteId("");
+                  setSelectedFindingId("");
                 }}
                 className={cn(
                   "flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs",
@@ -336,6 +458,9 @@ export function CodeAnalysisPage() {
                 <span className="min-w-0 flex-1 truncate font-mono">{value.relative_path}</span>
                 {value.secret_findings_count > 0 && (
                   <KeyRound className="size-3 text-amber-300" aria-label="Secret warning" />
+                )}
+                {(findingCountByFile.get(value.id) ?? 0) > 0 && (
+                  <Badge tone="critical">{findingCountByFile.get(value.id)} candidates</Badge>
                 )}
                 {value.route_count > 0 && <span className="text-[10px]">{value.route_count}</span>}
               </button>
@@ -361,7 +486,10 @@ export function CodeAnalysisPage() {
               theme="vs-dark"
               language={file.data?.language === "python" ? "python" : file.data?.language}
               value={file.data?.content ?? "// Source preview appears here after upload."}
-              onMount={(editor) => { editorRef.current = editor; }}
+              onMount={(editor) => {
+                editorRef.current = editor;
+                setEditorReady(true);
+              }}
               options={{
                 readOnly: true,
                 minimap: { enabled: false },
@@ -385,7 +513,7 @@ export function CodeAnalysisPage() {
                 disabled={!effectiveProjectId || selectedProject?.status === "empty" || analyze.isPending}
               >
                 {analyze.isPending ? <LoaderCircle className="size-4 animate-spin" /> : <Play className="size-4" />}
-                Analyze routes
+                Analyze source flows
               </Button>
             </CardHeader>
             <CardContent className="grid max-h-52 gap-2 overflow-y-auto sm:grid-cols-2">
@@ -409,6 +537,54 @@ export function CodeAnalysisPage() {
               {!routes.data?.length && (
                 <p className="col-span-full py-5 text-center text-xs text-slate-600">
                   Run route analysis after a guarded upload.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-2">
+                  <ShieldAlert className="size-4 text-amber-300" /> Static candidates
+                </span>
+                <Badge tone={findings.data?.length ? "warning" : "safe"}>
+                  {findings.data?.length ?? 0}
+                </Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="grid max-h-56 gap-2 overflow-y-auto sm:grid-cols-2">
+              {findings.data?.map((finding) => (
+                <button
+                  key={finding.id}
+                  type="button"
+                  onClick={() => selectFinding(finding)}
+                  className={cn(
+                    "rounded-lg border p-3 text-left",
+                    effectiveFindingId === finding.id
+                      ? "border-red-400/30 bg-red-400/[0.06]"
+                      : "border-line bg-black/10 hover:bg-white/[0.025]",
+                  )}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <Badge tone={findingTone(finding.severity)}>{finding.severity}</Badge>
+                    <span className="font-mono text-[10px] text-slate-600">
+                      {Math.round(finding.confidence * 100)}%
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs font-medium text-slate-200">{finding.title}</p>
+                  <p className="mt-1 truncate font-mono text-[10px] text-slate-500">
+                    {finding.file_path}:{finding.sink_line} · {finding.parameter ?? "unknown input"}
+                  </p>
+                </button>
+              ))}
+              {findings.data?.length === 0 && (
+                <p className="col-span-full py-5 text-center text-xs text-emerald-300/70">
+                  No traced source reaches a supported sensitive sink.
+                </p>
+              )}
+              {!findings.data && (
+                <p className="col-span-full py-5 text-center text-xs text-slate-600">
+                  Analyze source flows to create explainable candidates.
                 </p>
               )}
             </CardContent>
@@ -450,6 +626,58 @@ export function CodeAnalysisPage() {
             </CardContent>
           </Card>
 
+          <Card className={cn(selectedFinding && "border-red-400/15")}>
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between text-sm">
+                Finding inspector
+                {selectedFinding && (
+                  <Badge tone={findingTone(selectedFinding.severity)}>
+                    {selectedFinding.status.replaceAll("_", " ")}
+                  </Badge>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-xs">
+              {selectedFinding ? (
+                <>
+                  <div>
+                    <p className="font-medium text-slate-100">{selectedFinding.title}</p>
+                    <p className="mt-1 text-slate-600">
+                      Source-only evidence · {Math.round(selectedFinding.confidence * 100)}% confidence
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 rounded-lg border border-line bg-black/15 p-3">
+                    <span className="text-cyan-400">Source</span>
+                    <span className="break-all font-mono text-slate-300">{selectedFinding.source_label}</span>
+                    <span className="text-red-400">Sink</span>
+                    <span className="break-all font-mono text-slate-300">{selectedFinding.sink_label}</span>
+                    <span className="text-slate-600">Lines</span>
+                    <span className="font-mono text-slate-400">
+                      {selectedFinding.source_line} → {selectedFinding.sink_line}
+                    </span>
+                  </div>
+                  {selectedFinding.sanitizers.length > 0 ? (
+                    <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/[0.04] p-3">
+                      <p className="text-emerald-300">Sanitizer signal requires review</p>
+                      <p className="mt-1 text-slate-500">{selectedFinding.sanitizers.join(", ")}</p>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-amber-300">
+                      <AlertTriangle className="size-4" /> No supported sanitizer observed
+                    </div>
+                  )}
+                  <p className="text-slate-600">
+                    Static analysis does not prove exploitability or runtime reachability.
+                  </p>
+                </>
+              ) : (
+                <p className="py-6 text-center text-slate-600">
+                  Select a static candidate to inspect evidence.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader><CardTitle className="text-sm">Route details</CardTitle></CardHeader>
             <CardContent className="space-y-3 text-xs">
@@ -477,6 +705,80 @@ export function CodeAnalysisPage() {
             </CardContent>
           </Card>
         </div>
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.55fr)]">
+        <Card className="overflow-hidden">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <GitBranch className="size-4 text-violet-300" /> Source-to-Sink graph
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="h-[360px] p-0">
+            {selectedFlow ? (
+              <ReactFlow
+                nodes={graph.nodes}
+                edges={graph.edges}
+                fitView
+                fitViewOptions={{ padding: 0.2 }}
+                minZoom={0.35}
+                maxZoom={1.4}
+                nodesDraggable={false}
+                nodesConnectable={false}
+                elementsSelectable={false}
+                aria-label="Source-to-Sink data flow"
+              >
+                <Background color="#1e293b" gap={24} size={1} />
+                <Controls showInteractive={false} />
+              </ReactFlow>
+            ) : (
+              <div className="grid h-full place-items-center text-xs text-slate-600">
+                Select a candidate to visualize its non-executing trace.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Safe remediation diff</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-xs">
+            {selectedFinding ? (
+              <>
+                <div>
+                  <p className="font-medium text-slate-200">{selectedFinding.remediation.summary}</p>
+                  <ul className="mt-2 space-y-1 text-slate-500">
+                    {selectedFinding.remediation.guidance.map((value) => (
+                      <li key={value}>· {value}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="overflow-hidden rounded-lg border border-line font-mono text-[11px]">
+                  <div className="border-b border-red-400/15 bg-red-400/[0.05] p-3 text-red-200/80">
+                    <span className="mr-2 text-red-400">−</span>
+                    {selectedFinding.source_label} → {selectedFinding.sink_label}
+                  </div>
+                  <pre className="overflow-x-auto whitespace-pre-wrap bg-emerald-400/[0.04] p-3 text-emerald-200/80">
+                    <span className="mr-2 text-emerald-400">+</span>
+                    {selectedFinding.remediation.safe_example}
+                  </pre>
+                </div>
+                <div>
+                  <p className="text-slate-600">Verification</p>
+                  <p className="mt-1 text-slate-400">{selectedFinding.remediation.verification}</p>
+                </div>
+                <div className="rounded-lg border border-amber-400/15 bg-amber-400/[0.04] p-3 text-amber-200/70">
+                  {selectedFinding.limitations[0]}
+                </div>
+              </>
+            ) : (
+              <p className="py-12 text-center text-slate-600">
+                Remediation appears after selecting a static candidate.
+              </p>
+            )}
+          </CardContent>
+        </Card>
       </section>
     </div>
   );

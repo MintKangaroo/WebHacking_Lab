@@ -5,6 +5,8 @@ import type {
   CodeFileContent,
   CodeProject,
   CodeUploadResult,
+  StaticCodeFinding,
+  StaticDataFlow,
   StaticRoute,
 } from "../types/resources";
 
@@ -48,6 +50,14 @@ export function getCodeFile(
 
 export function getCodeRoutes(codeProjectId: string, signal?: AbortSignal) {
   return apiGet<StaticRoute[]>(`/code-projects/${codeProjectId}/routes`, signal);
+}
+
+export function getCodeFindings(codeProjectId: string, signal?: AbortSignal) {
+  return apiGet<StaticCodeFinding[]>(`/code-projects/${codeProjectId}/findings`, signal);
+}
+
+export function getCodeDataFlows(codeProjectId: string, signal?: AbortSignal) {
+  return apiGet<StaticDataFlow[]>(`/code-projects/${codeProjectId}/data-flows`, signal);
 }
 
 export function analyzeCodeProject(codeProjectId: string) {

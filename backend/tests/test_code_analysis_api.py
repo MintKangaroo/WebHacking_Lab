@@ -58,19 +58,20 @@ def test_upload_analyze_and_read_redacted_source(client: TestClient, tmp_path: P
     parent_id = _parent_project(client)
     project = _code_project(client, parent_id)
     marker = tmp_path / "must-not-exist"
-    source = f"""from flask import Flask, request
+    source = """from flask import Flask, request
 from pathlib import Path
 
 app = Flask(__name__)
 API_KEY = "super-secret-value"
-Path({str(marker)!r}).write_text("executed")
+Path(__MARKER__).write_text("executed")
 
 @app.route("/product/<int:item_id>", methods=["GET"])
 @login_required
 def product(item_id):
-    query = request.args.get("q")
-    return query
-"""
+    search = request.args.get("q")
+    query = f"SELECT * FROM products WHERE name = '{search}'"
+    return cursor.execute(query)
+""".replace("__MARKER__", repr(str(marker)))
     upload = client.post(
         "/api/code-projects/upload",
         data={"code_project_id": project["id"]},
@@ -94,6 +95,21 @@ def product(item_id):
     assert route["handler_name"] == "product"
     assert route["authentication"]["required"] is True
     assert {value["name"] for value in route["parameters"]} == {"item_id", "q"}
+    assert len(route["findings"]) == 1
+
+    findings = client.get(f"/api/code-projects/{project['id']}/findings")
+    assert findings.status_code == 200
+    finding = findings.json()[0]
+    assert finding["category"] == "sql_injection"
+    assert finding["status"] == "static_candidate"
+    assert finding["route"] == "/product/<int:item_id>"
+    assert finding["parameter"] == "q"
+    assert finding["sink_label"] == "cursor.execute"
+    flows = client.get(f"/api/code-projects/{project['id']}/data-flows")
+    assert flows.status_code == 200
+    assert flows.json()[0]["finding_id"] == finding["id"]
+    assert flows.json()[0]["nodes"][0]["kind"] == "source"
+    assert flows.json()[0]["nodes"][-1]["kind"] == "sink"
 
     file_id = next(value["id"] for value in payload["files"] if value["relative_path"] == "app.py")
     content = client.get(f"/api/code-projects/{project['id']}/files/{file_id}")
@@ -121,7 +137,11 @@ def test_zip_upload_detects_php_and_file_endpoint(client: TestClient) -> None:
                 "challenge.zip",
                 _zip(
                     {
-                        "public/index.php": b"<?php echo 'ok';",
+                        "public/index.php": (
+                            b'<?php $id = $_GET["id"]; '
+                            b'$query = "SELECT * FROM users WHERE id = " . $id; '
+                            b"mysqli_query($conn, $query);"
+                        ),
                         "composer.json": b'{"require":{"php":"^8.3"}}',
                     }
                 ),
@@ -135,6 +155,9 @@ def test_zip_upload_detects_php_and_file_endpoint(client: TestClient) -> None:
     assert analysis.status_code == 200
     assert analysis.json()["routes"][0]["path"] == "/public/"
     assert analysis.json()["routes"][0]["methods"] == ["GET", "POST"]
+    findings = client.get(f"/api/code-projects/{project['id']}/findings").json()
+    assert findings[0]["category"] == "sql_injection"
+    assert findings[0]["file_path"] == "public/index.php"
 
 
 def test_upload_rejects_zip_slip_and_symbolic_link(client: TestClient) -> None:

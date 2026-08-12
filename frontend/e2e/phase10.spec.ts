@@ -28,7 +28,9 @@ API_KEY = "e2e-secret-value"
 
 @app.get("/search")
 def search():
-    return request.args.get("q")
+    value = request.args.get("q")
+    query = f"SELECT * FROM products WHERE name = '{value}'"
+    return cursor.execute(query)
 `),
   });
   await page.getByLabel("Confirm source authorization").check();
@@ -37,8 +39,12 @@ def search():
   await expect(page.getByText("Secrets masked")).toBeVisible();
   await expect(page.getByText(/redacted-secret/).first()).toBeVisible();
 
-  await page.getByRole("button", { name: "Analyze routes" }).click();
+  await page.getByRole("button", { name: "Analyze source flows" }).click();
   await expect(page.getByText("/search").first()).toBeVisible();
+  await expect(page.getByText("Potential SQL Injection").first()).toBeVisible();
+  await page.getByRole("button", { name: /Potential SQL Injection/ }).click();
+  await expect(page.getByLabel("Source-to-Sink data flow")).toBeVisible();
+  await expect(page.getByText("Safe remediation diff")).toBeVisible();
   await page.getByRole("button", { name: /GET.*search/ }).click();
   await expect(page.getByText(/search · app.py:7/)).toBeVisible();
   await expect(page.getByText("query:q")).toBeVisible();

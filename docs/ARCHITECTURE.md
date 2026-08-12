@@ -10,7 +10,7 @@ The application is a React single-page client backed by a typed FastAPI API.
 SQLAlchemy repositories own persistence, domain services own state transitions,
 and routers only translate transport models.
 
-## Current Phase 10 components
+## Current Phase 11 components
 
 | Component | Responsibility |
 | --- | --- |
@@ -27,6 +27,7 @@ and routers only translate transport models.
 | Analysis engine | Six passive plugins with evidence, confidence, tests, limitations |
 | Scanner engine | Cancellable crawl, inventories, exact SAFE previews and evidence evaluation |
 | Source boundary | Guarded ZIP/files, artifact index, project detector, AST routes, redacted viewer |
+| Static analysis | Python AST and bounded PHP lexical Source/Sink traces, candidates, remediation |
 | Database | Async repositories, SQLite/PostgreSQL models, Alembic revisions |
 | Request context | Correlation IDs and structured lifecycle logging |
 | Containers | Non-root runtime, reduced capabilities, health checks |
@@ -120,14 +121,25 @@ executable denial, nested-archive denial, and symbolic/hard-link rejection.
 Accepted trees move atomically under a server-generated UUID. Secrets are
 displayed only in redacted, size-bounded form.
 
-Phase 10 implements language/framework detection, file indexing, Python AST
+Phase 11 implements language/framework detection, file indexing, Python AST
 decorator routes, conservative Plain PHP file endpoints, parameter inventory,
-and the Monaco route-to-line view. Source/Sink extraction, taint propagation,
-data-flow graphs, and remediation diffs remain Phase 11 work.
+and the Monaco route-to-line view. Its taint layer follows Flask request values
+through local assignments, string composition, dictionaries, simple calls and
+selected sanitizers to SQL, template, command, file and raw-response sinks. A
+bounded PHP lexer follows superglobals through statement-level assignments to
+SQL, command, include and raw-output sinks without invoking a PHP runtime.
 
-Future language rules produce sources, transformations, sanitizers, sinks, and
-trace gaps. Static candidates will not be upgraded to runtime-confirmed
-findings without evidence from the guarded execution path.
+Findings, ordered flow steps, route links, sanitizers, safe examples and trace
+limitations are persisted separately from source bodies. React Flow presents
+the stored Source-to-Sink path, while Monaco decorates the original source and
+sink lines. Parameterized SQL, numeric validation and HTML escaping are recorded
+as safe decisions and suppress the corresponding strong candidate.
+
+The analysis is deliberately intra-procedural and incomplete. Dynamic dispatch,
+complex aliases, runtime framework configuration and arbitrary wrapper chains
+produce trace gaps or limitations. Every result remains a `Static Candidate` or
+`Manual Confirmation Required`; source analysis alone cannot create a runtime-
+confirmed finding or a network request.
 
 ## Hybrid analysis
 

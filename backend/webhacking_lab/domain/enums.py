@@ -69,6 +69,13 @@ class CodeProjectStatus(StrEnum):
     FAILED = "failed"
 
 
+class StaticFindingStatus(StrEnum):
+    """Evidence maturity for source-only findings."""
+
+    STATIC_CANDIDATE = "static_candidate"
+    MANUAL_CONFIRMATION_REQUIRED = "manual_confirmation_required"
+
+
 class AuditEventType(StrEnum):
     """Auditable state changes."""
 
@@ -119,6 +126,10 @@ class VulnerabilityCategory(StrEnum):
     SQL_INJECTION = "sql_injection"
     OPEN_REDIRECT = "open_redirect"
     AUTHENTICATION = "authentication"
+    COMMAND_INJECTION = "command_injection"
+    SERVER_SIDE_TEMPLATE_INJECTION = "server_side_template_injection"
+    PATH_TRAVERSAL = "path_traversal"
+    FILE_INCLUSION = "file_inclusion"
 
 
 class Severity(StrEnum):

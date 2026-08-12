@@ -464,6 +464,10 @@ class CodeProject(TimestampedUuidMixin, VersionedEntityMixin, Base):
         back_populates="code_project",
         cascade="all, delete-orphan",
     )
+    static_findings: Mapped[list["StaticFindingRecord"]] = relationship(
+        back_populates="code_project",
+        cascade="all, delete-orphan",
+    )
 
 
 class CodeFile(TimestampedUuidMixin, Base):
@@ -513,6 +517,43 @@ class StaticRouteRecord(TimestampedUuidMixin, Base):
     findings_json: Mapped[list[str]] = mapped_column(JSON, default=list)
 
     code_project: Mapped[CodeProject] = relationship(back_populates="routes")
+
+
+class StaticFindingRecord(TimestampedUuidMixin, Base):
+    """Persisted source-only candidate with an explainable inert data-flow trace."""
+
+    __tablename__ = "static_findings"
+
+    code_project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("code_projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    code_file_id: Mapped[UUID] = mapped_column(
+        ForeignKey("code_files.id", ondelete="CASCADE"),
+        index=True,
+    )
+    static_route_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("static_routes.id", ondelete="SET NULL"),
+        index=True,
+    )
+    category: Mapped[str] = mapped_column(String(80), index=True)
+    title: Mapped[str] = mapped_column(String(240))
+    status: Mapped[str] = mapped_column(String(48), index=True)
+    severity: Mapped[str] = mapped_column(String(24))
+    confidence: Mapped[float] = mapped_column(Float)
+    route_handler: Mapped[str | None] = mapped_column(String(300))
+    source_label: Mapped[str] = mapped_column(Text)
+    sink_label: Mapped[str] = mapped_column(Text)
+    parameter: Mapped[str | None] = mapped_column(String(300))
+    source_line: Mapped[int] = mapped_column(Integer)
+    sink_line: Mapped[int] = mapped_column(Integer)
+    sanitizers_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    evidence_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    flow_steps_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    remediation_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    limitations_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+    code_project: Mapped[CodeProject] = relationship(back_populates="static_findings")
 
 
 class AuditEvent(TimestampedUuidMixin, Base):

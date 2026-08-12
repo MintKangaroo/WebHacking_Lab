@@ -6,7 +6,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from webhacking_lab.domain.enums import CodeProjectStatus
+from webhacking_lab.domain.enums import (
+    CodeProjectStatus,
+    Severity,
+    StaticFindingStatus,
+    VulnerabilityCategory,
+)
 
 
 class StaticAnalysisModel(BaseModel):
@@ -177,6 +182,98 @@ class RouteExtraction(StaticAnalysisModel):
 
     routes: list[ExtractedRoute]
     warnings: list[str]
+
+
+class StaticFlowStep(StaticAnalysisModel):
+    """One explainable step in a source-to-sink trace."""
+
+    id: str
+    kind: Literal["source", "transformation", "sanitizer", "sink"]
+    label: str
+    line: int
+    detail: str
+
+
+class StaticFlowEdge(StaticAnalysisModel):
+    """Directed relationship between two static flow steps."""
+
+    id: str
+    source: str
+    target: str
+    label: str
+
+
+class StaticRemediation(StaticAnalysisModel):
+    """Safe coding guidance generated from a known sink category."""
+
+    summary: str
+    guidance: list[str]
+    safe_example: str
+    verification: str
+
+
+class ExtractedStaticFinding(StaticAnalysisModel):
+    """Internal language-parser result before persistence identifiers are assigned."""
+
+    file_path: str
+    route_handler: str | None
+    category: VulnerabilityCategory
+    title: str
+    status: StaticFindingStatus
+    severity: Severity
+    confidence: float = Field(ge=0, le=1)
+    source_label: str
+    sink_label: str
+    parameter: str | None
+    source_line: int
+    sink_line: int
+    sanitizers: list[str]
+    evidence: list[str]
+    flow_steps: list[StaticFlowStep]
+    remediation: StaticRemediation
+    limitations: list[str]
+
+
+class StaticCodeFinding(StaticAnalysisModel):
+    """Persisted source-only finding, never represented as runtime-confirmed."""
+
+    id: UUID
+    code_project_id: UUID
+    code_file_id: UUID
+    static_route_id: UUID | None
+    file_path: str
+    route: str | None
+    route_handler: str | None
+    category: VulnerabilityCategory
+    title: str
+    status: StaticFindingStatus
+    severity: Severity
+    confidence: float = Field(ge=0, le=1)
+    source_label: str
+    sink_label: str
+    parameter: str | None
+    source_line: int
+    sink_line: int
+    sanitizers: list[str]
+    evidence: list[str]
+    remediation: StaticRemediation
+    limitations: list[str]
+
+
+class StaticDataFlow(StaticAnalysisModel):
+    """UI-ready source-to-sink graph tied to one static candidate."""
+
+    finding_id: UUID
+    nodes: list[StaticFlowStep]
+    edges: list[StaticFlowEdge]
+
+
+class StaticAnalysisExtraction(StaticAnalysisModel):
+    """Bounded multi-language taint extraction result."""
+
+    findings: list[ExtractedStaticFinding]
+    warnings: list[str]
+    safe_decisions: list[str]
 
 
 JsonObject = dict[str, Any]

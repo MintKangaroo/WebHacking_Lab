@@ -51,6 +51,14 @@ confirmation phrase, explicit authorization, and a bounded purpose statement.
 Legacy Compose records are migrated to deny-by-default authorization and cannot
 accept another upload until permission is reconfirmed.
 
+Phase 11 analyzes accepted text as data only. Python uses the standard-library
+AST and PHP uses a bounded lexer; neither parser imports a module, invokes a
+language runtime, resolves dependencies, starts a subprocess, or performs an
+HTTP request. Findings are source-only candidates with confidence and explicit
+trace limitations. They cannot change runtime verification state or authorize a
+generated request. Parameter binding and recognized sanitizers are recorded as
+safe decisions rather than vulnerability evidence.
+
 External targets remain disabled until both process switches are explicitly
 enabled, an authorization-backed project scope exists, the workspace is
 enabled with a stated purpose, and the exact request preview is confirmed.
@@ -86,6 +94,11 @@ enabled with a stated purpose, and the exact request preview is confirmed.
   presented as analyzed code.
 - Python routes are parsed with `ast`; parser failures become limitations and
   never trigger fallback execution or imports.
+- Static taint analysis is bounded per file and project. Unsupported languages,
+  oversized files, parser failures and trace gaps become warnings or limitations,
+  never a fallback execution path.
+- Source-only candidates never receive `runtime_confirmed`; Hybrid/PoC execution
+  remains unavailable and must later use the shared gateway and fresh approval.
 
 ## Dependency advisory note
 

@@ -16,6 +16,8 @@ from webhacking_lab.static_analysis.models import (
     CodeProjectCreate,
     CodeProjectRead,
     CodeUploadRead,
+    StaticCodeFinding,
+    StaticDataFlow,
     StaticRoute,
 )
 
@@ -128,6 +130,32 @@ async def list_code_routes(
     settings: ActiveSettings,
 ) -> list[StaticRoute]:
     return await CodeProjectService(session, settings).routes(code_project_id)
+
+
+@router.get(
+    "/code-projects/{code_project_id}/findings",
+    response_model=list[StaticCodeFinding],
+    summary="Get source-only candidates without overstating runtime confirmation",
+)
+async def list_code_findings(
+    code_project_id: UUID,
+    session: Session,
+    settings: ActiveSettings,
+) -> list[StaticCodeFinding]:
+    return await CodeProjectService(session, settings).findings(code_project_id)
+
+
+@router.get(
+    "/code-projects/{code_project_id}/data-flows",
+    response_model=list[StaticDataFlow],
+    summary="Get explainable source-to-sink graphs for static candidates",
+)
+async def list_code_data_flows(
+    code_project_id: UUID,
+    session: Session,
+    settings: ActiveSettings,
+) -> list[StaticDataFlow]:
+    return await CodeProjectService(session, settings).data_flows(code_project_id)
 
 
 @router.post(

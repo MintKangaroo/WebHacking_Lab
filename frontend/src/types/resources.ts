@@ -344,6 +344,60 @@ export type StaticRoute = {
   findings: string[];
 };
 
+export type StaticFindingStatus =
+  | "static_candidate"
+  | "manual_confirmation_required";
+
+export type StaticFlowStep = {
+  id: string;
+  kind: "source" | "transformation" | "sanitizer" | "sink";
+  label: string;
+  line: number;
+  detail: string;
+};
+
+export type StaticFlowEdge = {
+  id: string;
+  source: string;
+  target: string;
+  label: string;
+};
+
+export type StaticCodeFinding = {
+  id: string;
+  code_project_id: string;
+  code_file_id: string;
+  static_route_id: string | null;
+  file_path: string;
+  route: string | null;
+  route_handler: string | null;
+  category: string;
+  title: string;
+  status: StaticFindingStatus;
+  severity: "info" | "low" | "medium" | "high" | "critical";
+  confidence: number;
+  source_label: string;
+  sink_label: string;
+  parameter: string | null;
+  source_line: number;
+  sink_line: number;
+  sanitizers: string[];
+  evidence: string[];
+  remediation: {
+    summary: string;
+    guidance: string[];
+    safe_example: string;
+    verification: string;
+  };
+  limitations: string[];
+};
+
+export type StaticDataFlow = {
+  finding_id: string;
+  nodes: StaticFlowStep[];
+  edges: StaticFlowEdge[];
+};
+
 export type CodeAnalysis = {
   project: CodeProject;
   routes: StaticRoute[];

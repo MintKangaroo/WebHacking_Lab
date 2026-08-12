@@ -35,7 +35,9 @@
 | ZIP Slip / archive bomb | Normalized relative paths, duplicate denial, entry/count/size budgets |
 | ZIP links or executable content | Reject symlink, hard link, special type, executable mode and binary headers |
 | Uploaded-code execution | No import/build/run/dependency-install path |
+| Parser-triggered execution | Standard Python AST and inert PHP lexer only; no runtime or subprocess fallback |
 | Uploaded secret disclosure | Secret-shape warning plus redaction on every code-content response |
+| Static finding overclaim | Source-only status, confidence, sanitizer decisions, trace gaps and limitations |
 | Lab breakout | Internal network, non-root, dropped capabilities, limits, read-only FS |
 | Analyzer overclaim | Evidence, confidence, validation state, and limitations |
 | Execution bypass | One guarded client injected into all execution-capable services |
@@ -59,6 +61,8 @@
 - A CTF profile is selected for a production host.
 - A ZIP entry escapes extraction, is a symbolic link, or expands beyond budget.
 - Source-generated tests attempt to infer an unregistered hostname.
+- Malformed or highly dynamic source tries to force parser fallback execution or
+  turn an incomplete trace into a confirmed finding.
 - A report embeds an authorization header captured before redaction.
 
 Each case requires a regression test before the related feature is considered
@@ -69,7 +73,7 @@ the test suite never calls an external target.
 
 ## Residual risk
 
-Static analysis is incomplete, runtime signals can be noisy, authorization
+Static analysis is intra-procedural and incomplete, runtime signals can be noisy, authorization
 claims may be false, DNS and network conditions change, and isolated labs may
 contain implementation mistakes. The product reduces these risks through
 bounded capability, explicit user decisions, auditability, and conservative

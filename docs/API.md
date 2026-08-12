@@ -133,9 +133,11 @@ GET  /api/code-projects/{id}/files/{file_id}
 POST /api/code-projects/{id}/analyze
 GET  /api/code-projects/{id}/analysis
 GET  /api/code-projects/{id}/routes
+GET  /api/code-projects/{id}/findings
+GET  /api/code-projects/{id}/data-flows
 ```
 
-파일 본문 API는 500KB까지만 표시하며 비밀값을 다시 마스킹합니다. 업로드 응답의 `execution_performed`는 항상 `false`입니다. Phase 10 Route 분석은 Python AST decorator와 보수적인 Plain PHP 파일 endpoint에 한정되며, 동적 라우팅과 middleware는 제한 사항으로 표시합니다.
+파일 본문 API는 500KB까지만 표시하며 비밀값을 다시 마스킹합니다. 업로드 응답의 `execution_performed`는 항상 `false`입니다. Phase 11은 Python AST와 보수적인 PHP lexer로 request/superglobal 입력을 지원 sink까지 추적합니다. 결과는 `static_candidate` 또는 `manual_confirmation_required`이며 런타임 확인으로 승격되지 않습니다. 동적 라우팅, 함수 간 흐름, alias와 middleware는 제한 사항으로 표시합니다.
 
 ## 분석
 

@@ -8,6 +8,8 @@ import type {
   CodeFile,
   CodeProject,
   ProjectSummary,
+  StaticCodeFinding,
+  StaticDataFlow,
   StaticRoute,
 } from "../src/types/resources";
 
@@ -17,10 +19,28 @@ vi.mock("@monaco-editor/react", () => ({
   ),
 }));
 
+vi.mock("@xyflow/react", () => ({
+  Background: () => null,
+  Controls: () => null,
+  Position: { Left: "left", Right: "right" },
+  ReactFlow: ({
+    nodes,
+    "aria-label": ariaLabel,
+  }: {
+    nodes: Array<{ id: string; data: { label: string } }>;
+    "aria-label"?: string;
+  }) => (
+    <div aria-label={ariaLabel}>
+      {nodes.map((node) => <span key={node.id}>{node.data.label}</span>)}
+    </div>
+  ),
+}));
+
 const parentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const codeProjectId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const fileId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const routeId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+const findingId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
 
 const parent: ProjectSummary = {
   id: parentId,
@@ -84,14 +104,56 @@ const route: StaticRoute = {
     mechanisms: ["login_required"],
     limitations: [],
   },
-  findings: [],
+  findings: [findingId],
+};
+
+const staticFinding: StaticCodeFinding = {
+  id: findingId,
+  code_project_id: codeProjectId,
+  code_file_id: fileId,
+  static_route_id: routeId,
+  file_path: "app.py",
+  route: "/product/<int:item_id>",
+  route_handler: "product",
+  category: "sql_injection",
+  title: "Potential SQL Injection",
+  status: "static_candidate",
+  severity: "high",
+  confidence: 0.9,
+  source_label: "request.query['q']",
+  sink_label: "cursor.execute",
+  parameter: "q",
+  source_line: 9,
+  sink_line: 11,
+  sanitizers: [],
+  evidence: ["Source observed at line 9.", "Sink receives the traced value at line 11."],
+  remediation: {
+    summary: "Keep user data separate from SQL syntax.",
+    guidance: ["Use parameter binding."],
+    safe_example: 'cursor.execute("SELECT * FROM items WHERE id = ?", (item_id,))',
+    verification: "Confirm request data no longer reaches SQL text.",
+  },
+  limitations: ["Intra-procedural analysis does not prove runtime reachability."],
+};
+
+const staticFlow: StaticDataFlow = {
+  finding_id: findingId,
+  nodes: [
+    { id: "step-0", kind: "source", label: "request.query['q']", line: 9, detail: "Input" },
+    { id: "step-1", kind: "transformation", label: "f-string interpolation", line: 10, detail: "Compose" },
+    { id: "step-2", kind: "sink", label: "cursor.execute", line: 11, detail: "SQL sink" },
+  ],
+  edges: [
+    { id: "edge-0", source: "step-0", target: "step-1", label: "flows to" },
+    { id: "edge-1", source: "step-1", target: "step-2", label: "flows to" },
+  ],
 };
 
 const analysis: CodeAnalysis = {
   project: codeProject,
   routes: [route],
   analysis_log: ["No code executed"],
-  limitations: ["Source-to-Sink analysis follows in Phase 11."],
+  limitations: ["Static candidates are not Runtime Confirmed."],
 };
 
 function response(payload: unknown, status = 200) {
@@ -129,6 +191,12 @@ describe("Phase 10 inert code analysis", () => {
         });
       }
       if (path === `/api/code-projects/${codeProjectId}/routes`) return response([route]);
+      if (path === `/api/code-projects/${codeProjectId}/findings`) {
+        return response([staticFinding]);
+      }
+      if (path === `/api/code-projects/${codeProjectId}/data-flows`) {
+        return response([staticFlow]);
+      }
       if (path === `/api/code-projects/${codeProjectId}/analysis`) return response(analysis);
       if (path === `/api/code-projects/${codeProjectId}/analyze` && init?.method === "POST") {
         return response(analysis);
@@ -143,13 +211,18 @@ describe("Phase 10 inert code analysis", () => {
     expect(await screen.findByText("Secrets masked")).toBeInTheDocument();
     expect(screen.getByTestId("monaco-preview")).toHaveTextContent("<redacted-secret>");
     expect(screen.getByText("Flask")).toBeInTheDocument();
+    expect((await screen.findAllByText("Potential SQL Injection")).length).toBeGreaterThan(0);
+    await userEvent.click(screen.getByRole("button", { name: /Potential SQL Injection/ }));
+    expect(screen.getByText("No supported sanitizer observed")).toBeInTheDocument();
+    expect(screen.getByLabelText("Source-to-Sink data flow")).toHaveTextContent("cursor.execute");
+    expect(screen.getByText("Safe remediation diff")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /GET.*product/ }));
     expect(await screen.findByText(/product · app.py:8/)).toBeInTheDocument();
     expect(screen.getByText("query:q")).toBeInTheDocument();
     expect(screen.getByText("Auth signal observed")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Analyze routes" }));
+    await userEvent.click(screen.getByRole("button", { name: "Analyze source flows" }));
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         `/api/code-projects/${codeProjectId}/analyze`,
