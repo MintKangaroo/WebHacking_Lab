@@ -2,12 +2,13 @@
 
 import ipaddress
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from webhacking_lab.core.config import Settings
-from webhacking_lab.database.models import ScanEvent, ScanJob, ScanTestCase
+from webhacking_lab.database.models import ScanEvent, ScanJob, ScanTestCase, ScopeRule
 from webhacking_lab.database.repositories.audit import AuditRepository
 from webhacking_lab.database.repositories.projects import (
     ProjectRepository,
@@ -116,33 +117,9 @@ class ScanService:
         self._scans = ScanRepository(session)
         self._audit = AuditRepository(session)
 
-    async def create(self, data: ScanJobCreate, correlation_id: str | None) -> ScanJobRead:
-        """Persist a validated passive or SAFE plan; no request is sent here."""
-
-        if self._settings.analysis_only or not self._settings.network_execution_enabled:
-            raise ExecutionPolicyError("URL scanning is disabled by the server safety policy")
-        if data.profile not in {ScannerProfile.PASSIVE, ScannerProfile.SAFE}:
-            raise ExecutionPolicyError("Only PASSIVE and SAFE scanner profiles are implemented")
-        if data.crawl_policy.execute_javascript:
-            raise ExecutionPolicyError(
-                "Browser JavaScript execution is not available in passive scans"
-            )
-        project = await self._projects.get(data.project_id)
-        workspace = await self._workspaces.get(data.workspace_id)
-        if project is None or workspace is None or workspace.project_id != data.project_id:
-            raise EntityNotFoundError("Project or workspace was not found")
-        if not workspace.network_execution_enabled:
-            raise ExecutionPolicyError("Network execution is disabled for this workspace")
-        remaining_budget = workspace.request_budget - workspace.requests_used
-        if remaining_budget <= 0:
-            raise ExecutionPolicyError("Workspace request budget is exhausted")
-        normalized = normalize_request(
-            method="GET",
-            url=data.target,
-            max_body_bytes=self._settings.max_request_bytes,
-        )
-        rules = await self._scopes.list_for_project(project.id)
-        specs = [
+    @staticmethod
+    def _scope_specs(rules: list[ScopeRule]) -> list[ScopeRuleSpec]:
+        return [
             ScopeRuleSpec(
                 id=rule.id,
                 scheme=rule.scheme,
@@ -156,17 +133,96 @@ class ScanService:
             )
             for rule in rules
         ]
-        decision = await self._guard.check(normalized.url, specs)
+
+    async def _register_ctf_scope(self, project_id: UUID, target_url: str) -> ScopeRule:
+        """Register the pasted CTF target host as a pre-authorized scope rule."""
+
+        parsed = urlsplit(target_url)
+        return await self._scopes.add(
+            ScopeRule(
+                project_id=project_id,
+                scheme=parsed.scheme,
+                hostname=(parsed.hostname or "").lower(),
+                port=parsed.port,
+                path_prefix="/",
+                allow_subdomains=False,
+                max_requests_per_minute=self._settings.global_requests_per_minute,
+                max_concurrency=self._settings.default_target_concurrency,
+                authorization_confirmed=True,
+                authorization_notes=(
+                    "Auto-registered for a CTF scan (operator opted in via CTF mode)."
+                ),
+            )
+        )
+
+    async def create(self, data: ScanJobCreate, correlation_id: str | None) -> ScanJobRead:
+        """Persist a validated passive, SAFE, or CTF plan; no request is sent here."""
+
+        if self._settings.analysis_only or not self._settings.network_execution_enabled:
+            raise ExecutionPolicyError("URL scanning is disabled by the server safety policy")
+        if data.profile == ScannerProfile.CTF and not self._settings.ctf_mode_enabled:
+            raise ExecutionPolicyError(
+                "CTF scanning is disabled; set WEBHACKING_CTF_MODE_ENABLED=true to allow it"
+            )
+        if data.profile not in {
+            ScannerProfile.PASSIVE,
+            ScannerProfile.SAFE,
+            ScannerProfile.CTF,
+        }:
+            raise ExecutionPolicyError(
+                "Only PASSIVE, SAFE, and CTF scanner profiles are implemented"
+            )
+        if data.crawl_policy.execute_javascript:
+            raise ExecutionPolicyError(
+                "Browser JavaScript execution is not available in passive scans"
+            )
+        project = await self._projects.get(data.project_id)
+        workspace = await self._workspaces.get(data.workspace_id)
+        if project is None or workspace is None or workspace.project_id != data.project_id:
+            raise EntityNotFoundError("Project or workspace was not found")
+        if not workspace.network_execution_enabled:
+            if data.profile == ScannerProfile.CTF:
+                # Full CTF gate relaxation: the operator already opted in via the
+                # server flag, so enable this workspace for network execution instead
+                # of forcing a separate manual toggle.
+                workspace.network_execution_enabled = True
+            else:
+                raise ExecutionPolicyError("Network execution is disabled for this workspace")
+        remaining_budget = workspace.request_budget - workspace.requests_used
+        if remaining_budget <= 0:
+            raise ExecutionPolicyError("Workspace request budget is exhausted")
+        normalized = normalize_request(
+            method="GET",
+            url=data.target,
+            max_body_bytes=self._settings.max_request_bytes,
+        )
+        rules = await self._scopes.list_for_project(project.id)
+        decision = await self._guard.check(normalized.url, self._scope_specs(rules))
         matched = next((rule for rule in rules if rule.id == decision.matched_rule_id), None)
+        if (
+            data.profile == ScannerProfile.CTF
+            and decision.code == "not_in_scope"
+            and matched is None
+        ):
+            # Scope Guard's SSRF/IP checks already passed (only the allowlist-membership
+            # check failed), so auto-register the pasted target as an authorized rule.
+            # This bypasses the manual scope + authorization ceremony, never SSRF policy.
+            matched = await self._register_ctf_scope(project.id, normalized.url)
+            rules = [*rules, matched]
+            decision = await self._guard.check(normalized.url, self._scope_specs(rules))
         if not decision.allowed or matched is None:
             raise ExecutionPolicyError(f"Scope Guard blocked the scan target: {decision.reason}")
         if not _is_loopback(normalized.host) and not matched.authorization_confirmed:
-            raise ExecutionPolicyError("External scan targets require an authorized scope rule")
+            if data.profile == ScannerProfile.CTF:
+                matched.authorization_confirmed = True
+            else:
+                raise ExecutionPolicyError("External scan targets require an authorized scope rule")
         active_limit = 0
-        if data.profile == ScannerProfile.SAFE:
+        if data.profile in {ScannerProfile.SAFE, ScannerProfile.CTF}:
             if remaining_budget < 2:
                 raise ExecutionPolicyError(
-                    "SAFE scans require budget for at least one crawl and one approved test"
+                    f"{data.profile.value.upper()} scans require budget for at least one crawl "
+                    "and one test"
                 )
             active_limit = min(data.active_test_policy.max_tests, remaining_budget - 1)
         effective_request_limit = min(
@@ -206,7 +262,7 @@ class ScanService:
                     "active_test_policy": data.active_test_policy.model_copy(
                         update={"max_tests": active_limit}
                     ).model_dump(mode="json")
-                    if data.profile == ScannerProfile.SAFE
+                    if data.profile in {ScannerProfile.SAFE, ScannerProfile.CTF}
                     else ActiveTestPolicy().model_dump(mode="json"),
                 },
             )
@@ -215,10 +271,18 @@ class ScanService:
             ScanEvent(
                 scan_id=job.id,
                 stage="Queued",
-                message=(
-                    "SAFE scan accepted; mutation requests require a second, per-test approval."
-                    if data.profile == ScannerProfile.SAFE
-                    else "Passive scan accepted; no mutation tests will be generated."
+                message={
+                    ScannerProfile.SAFE: (
+                        "SAFE scan accepted; mutation requests require a second, "
+                        "per-test approval."
+                    ),
+                    ScannerProfile.CTF: (
+                        "CTF scan accepted; bounded read-only probes will run unattended "
+                        "on the authorized target."
+                    ),
+                }.get(
+                    data.profile,
+                    "Passive scan accepted; no mutation tests will be generated.",
                 ),
                 details_json={
                     "profile": data.profile.value,

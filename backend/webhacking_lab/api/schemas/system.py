@@ -16,6 +16,7 @@ class SafetyStatus(StrictSchema):
 
     mode: Literal["Analysis Only", "Controlled Execution"]
     network_execution_enabled: bool
+    ctf_mode_enabled: bool
     insecure_tls_allowed: bool
     max_response_bytes: int
     global_requests_per_minute: int

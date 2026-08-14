@@ -16,10 +16,11 @@ from webhacking_lab.api.dependencies import (
 from webhacking_lab.core.config import Settings
 from webhacking_lab.core.rate_limit import RequestGate
 from webhacking_lab.database.session import Database
+from webhacking_lab.domain.enums import ScannerProfile
 from webhacking_lab.http_client.client import SingleHopSender
 from webhacking_lab.http_client.scope_guard import DnsResolver
 from webhacking_lab.scanner.active_engine import run_approved_scan_tests
-from webhacking_lab.scanner.engine import run_scan_job
+from webhacking_lab.scanner.engine import run_ctf_scan_job, run_scan_job
 from webhacking_lab.scanner.jobs import ScanTaskRegistry
 from webhacking_lab.scanner.models import (
     ScanCancelRead,
@@ -69,9 +70,12 @@ async def create_scan(
     )
     database: Database = request.app.state.database
     tasks: ScanTaskRegistry = request.app.state.scan_tasks
+    # CTF runs the crawl and the auto-approved probes in one unattended job; PASSIVE
+    # and SAFE stop after the crawl (SAFE then waits for a separate per-test approval).
+    runner = run_ctf_scan_job if result.profile == ScannerProfile.CTF else run_scan_job
     tasks.start(
         result.id,
-        run_scan_job(
+        runner(
             database,
             settings,
             gate,

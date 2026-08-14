@@ -228,7 +228,7 @@ class PassiveScanEngine:
                 0.74,
                 correlation_id,
             )
-            if job.profile == ScannerProfile.SAFE:
+            if job.profile in {ScannerProfile.SAFE, ScannerProfile.CTF}:
                 await self._stage(
                     job,
                     ScanStatus.PLANNING_ACTIVE_TESTS,
@@ -238,6 +238,21 @@ class PassiveScanEngine:
                 )
                 planned = await self._plan_active_tests(job, correlation_id)
                 if planned:
+                    if job.profile == ScannerProfile.CTF:
+                        # CTF opted into unattended execution: auto-approve the exact
+                        # previews so the active engine can run them without a manual
+                        # approval step. Every probe is still a single read-only GET.
+                        await self._approve_ctf_tests(job, correlation_id)
+                        job.status = ScanStatus.ACTIVE_TESTING
+                        job.current_stage = "Active Testing"
+                        job.progress = 0.82
+                        await self._event(
+                            job,
+                            "CTF probes were auto-approved for unattended execution.",
+                            details={"planned_tests": planned},
+                        )
+                        await self._session.commit()
+                        return
                     job.status = ScanStatus.WAITING_FOR_APPROVAL
                     job.current_stage = "Waiting for Approval"
                     job.progress = 0.8
@@ -566,6 +581,32 @@ class PassiveScanEngine:
         )
         return planned_count
 
+    async def _approve_ctf_tests(
+        self,
+        job: ScanJob,
+        correlation_id: str | None,
+    ) -> None:
+        """Auto-approve every persisted CTF preview for unattended execution."""
+
+        approved_at = datetime.now(UTC)
+        approved_ids: list[str] = []
+        for test in await self._scans.list_test_cases(job.id):
+            if test.status != ActiveTestStatus.PREVIEW:
+                continue
+            test.status = ActiveTestStatus.APPROVED
+            test.approved_at = approved_at
+            approved_ids.append(str(test.id))
+        await self._audit.record(
+            AuditEventType.SCAN_TESTS_APPROVED,
+            resource_type="scan_job",
+            resource_id=job.id,
+            project_id=job.project_id,
+            workspace_id=job.workspace_id,
+            correlation_id=correlation_id,
+            details={"approved_tests": len(approved_ids), "auto_approved": True},
+        )
+        await self._session.commit()
+
     async def _add_parameters(
         self,
         job: ScanJob,
@@ -673,6 +714,36 @@ async def run_scan_job(
 
     async for session in database.session():
         await PassiveScanEngine(session, settings, gate, sender, resolver).run(
+            scan_id,
+            correlation_id,
+        )
+
+
+async def run_ctf_scan_job(
+    database: Database,
+    settings: Settings,
+    gate: RequestGate,
+    sender: SingleHopSender,
+    resolver: DnsResolver,
+    scan_id: UUID,
+    correlation_id: str | None,
+) -> None:
+    """Crawl, then unattended-run the auto-approved CTF probes in one background job.
+
+    The passive engine auto-approves the CTF previews and leaves the job in
+    ``ACTIVE_TESTING``; the active engine then executes those exact single-request
+    probes through the same shared gateway that SAFE approved tests use.
+    """
+
+    from webhacking_lab.scanner.active_engine import SafeActiveScanEngine
+
+    async for session in database.session():
+        await PassiveScanEngine(session, settings, gate, sender, resolver).run(
+            scan_id,
+            correlation_id,
+        )
+    async for session in database.session():
+        await SafeActiveScanEngine(session, settings, gate, sender, resolver).run(
             scan_id,
             correlation_id,
         )

@@ -29,6 +29,7 @@ class Settings(BaseSettings):
 
     analysis_only: bool = True
     network_execution_enabled: bool = False
+    ctf_mode_enabled: bool = False
     allow_insecure_tls: bool = False
     global_requests_per_minute: int = Field(default=30, ge=1, le=120)
     default_target_concurrency: int = Field(default=2, ge=1, le=5)

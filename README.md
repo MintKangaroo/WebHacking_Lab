@@ -109,9 +109,9 @@ docker compose up --build
 1. 좌측 **URL Scanner**를 엽니다.
 2. 실행 승인이 끝난 프로젝트와 워크스페이스를 선택합니다.
 3. 등록된 Scope 안의 시작 URL을 입력합니다.
-4. `PASSIVE` 또는 `SAFE`를 선택합니다. 처음에는 `Depth 1 / Pages 10 / Requests 10 / 1 req/s`를 권장합니다.
+4. `PASSIVE`, `SAFE`, (CTF 모드가 켜진 경우) `CTF` 중 하나를 선택합니다. 처음에는 `Depth 1 / Pages 10 / Requests 10 / 1 req/s`를 권장합니다.
 5. 승인된 사용 목적을 적고 권한 확인란을 선택합니다.
-6. **Start PASSIVE scan** 또는 **Start SAFE scan**을 누릅니다.
+6. **Start PASSIVE scan** / **Start SAFE scan** / **Start CTF scan**을 누릅니다.
 7. Endpoint, Parameter, Finding, Policy Event를 확인합니다. 필요하면 **Stop scan**으로 중단합니다.
 8. SAFE는 자동 실행되지 않고 **Waiting for Approval**에서 멈춥니다.
 9. **Tests**에서 정확한 HTTP 요청, 목적, 위험, 성공 기준, 오탐 가능성을 읽고 필요한 항목만 선택합니다.
@@ -126,6 +126,20 @@ Scanner가 자동으로 확인하는 범위:
 - 서버/프레임워크 단서, Security Header, CORS, Cookie, JWT, XSS 반사, SQL 오류 지표
 
 `PASSIVE`는 GET 기반 수집만 합니다. `SAFE`는 수집 후 최대 10개의 낮은 위험 테스트를 Preview로 만들며, 사용자가 개별 승인하기 전에는 한 건도 보내지 않습니다. 현재 SAFE 플러그인은 SQL 오류·숫자형 boolean 차이, 실행 불가능한 XSS 반사 marker, 따라가지 않는 예약 도메인 redirect, 단일 CORS OPTIONS 관찰을 지원합니다. 시간 지연, 데이터 추출, 파일/DB 쓰기, 명령 실행, JavaScript 실행, 로그인 자동화는 비활성화되어 있습니다.
+
+#### CTF 프로필: URL만 붙여넣고 스캔하기
+
+CTF 대회처럼 이미 대상 권한이 있을 때는 승인 절차를 생략하는 `CTF` 프로필을 쓸 수 있습니다. 서버에서 `WEBHACKING_CTF_MODE_ENABLED=true`(그리고 `WEBHACKING_NETWORK_EXECUTION_ENABLED=true`)를 설정하면 URL Scanner에 `CTF` 옵션이 나타납니다.
+
+`CTF` 프로필은 게이트를 전면 완화합니다.
+
+- 붙여넣은 시작 URL의 호스트를 **인가된 Scope 규칙으로 자동 등록**합니다.
+- 해당 워크스페이스의 **네트워크 실행을 자동 활성화**합니다.
+- 계획된 read-only 프로브를 **자동 승인**하고 별도 확인 없이 **무인 실행**합니다.
+
+CTF 액티브 플러그인은 실제 탐지 페이로드를 보냅니다: SQL 오류/UNION/boolean 프로브, `<script>` 반사 marker XSS, `/etc/passwd` 경로 탐색, 예약 호스트 open redirect. 각 프로브는 **단일 GET 한 건**이며 쿼리 파라미터 하나만 치환하고, 요청 본문·자격증명을 재전송하지 않습니다. `DROP`/`DELETE`/`SLEEP`/`INTO OUTFILE` 등 상태를 변경·지연·삭제하는 값은 CTF 비파괴 정책이 계속 차단합니다.
+
+완화되는 것은 **인가·승인 절차뿐**입니다. Scope Guard의 SSRF·사설/메타데이터 IP 차단, 민감정보 마스킹, 전역·Scope 레이트 리밋, 감사 로그는 그대로 적용됩니다. 본인이 소유했거나 명시적 허가를 받은 대상에만 사용하세요.
 
 ### 4. 소스코드를 실행하지 않고 구조 분석하기
 
@@ -323,7 +337,7 @@ PLAYWRIGHT_BASE_URL=http://127.0.0.1:8080 npm run e2e
 
 현재 구현 범위는 Foundation, HTTP Workspace, 제한적 외부 Repeater, Diff, Passive Analysis, React Flow 기초, Phase 8 URL Scanner, Phase 9 승인형 SAFE Scanner, Phase 10 Source Upload Foundation과 Phase 11 Flask/PHP Source-to-Sink 분석입니다.
 
-- URL crawler는 PASSIVE와 SAFE를 지원합니다. CTF/LOCAL_LAB 프로필, 제한적 timing test와 extraction은 아직 비활성화되어 있습니다.
+- URL crawler는 PASSIVE, SAFE, 그리고 서버 플래그로 활성화하는 CTF 프로필을 지원합니다. LOCAL_LAB 프로필, 제한적 timing test와 extraction은 아직 비활성화되어 있습니다.
 - Phase 11 taint는 Python 함수 내부와 보수적인 PHP statement 흐름에 한정됩니다. 함수 간 호출, 복잡한 alias, dynamic include·metaprogramming은 분석 한계로 표시합니다.
 - Express/FastAPI/Django/Laravel/Spring 심화 규칙과 런타임 증거를 연결하는 Hybrid verification은 후속 Phase 범위입니다.
 - CTF Workspace, Encoding Workbench, 5개 격리 Lab, Finding/Report는 후속 Phase입니다.

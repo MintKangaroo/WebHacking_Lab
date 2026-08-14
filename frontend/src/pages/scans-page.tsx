@@ -17,6 +17,7 @@ import { useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 
+import { dashboardQueryOptions } from "../api/dashboard";
 import { getProject, getProjects } from "../api/projects";
 import {
   approveScanTests,
@@ -123,7 +124,9 @@ export function ScansPage() {
   const [projectId, setProjectId] = useState("");
   const [workspaceId, setWorkspaceId] = useState("");
   const [target, setTarget] = useState("http://127.0.0.1:8001/");
-  const [profile, setProfile] = useState<Extract<ScannerProfile, "passive" | "safe">>("passive");
+  const [profile, setProfile] = useState<Extract<ScannerProfile, "passive" | "safe" | "ctf">>(
+    "passive",
+  );
   const [expectedUse, setExpectedUse] = useState("Authorized application inventory and safe validation");
   const [confirmed, setConfirmed] = useState(false);
   const [maxDepth, setMaxDepth] = useState(2);
@@ -135,6 +138,8 @@ export function ScansPage() {
   const [selectedTestIds, setSelectedTestIds] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<"endpoints" | "parameters" | "tests" | "findings" | "events">("endpoints");
 
+  const overview = useQuery(dashboardQueryOptions());
+  const ctfModeEnabled = overview.data?.safety.ctf_mode_enabled ?? false;
   const projects = useQuery({
     queryKey: ["projects"],
     queryFn: ({ signal }) => getProjects(signal),
@@ -209,7 +214,13 @@ export function ScansPage() {
       setSelectedScanId(job.id);
       setConfirmed(false);
       await queryClient.invalidateQueries({ queryKey: ["scans", job.project_id] });
-      toast.success(job.profile === "safe" ? "SAFE scan queued" : "Passive scan queued");
+      toast.success(
+        job.profile === "safe"
+          ? "SAFE scan queued"
+          : job.profile === "ctf"
+            ? "CTF scan queued"
+            : "Passive scan queued",
+      );
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -237,11 +248,12 @@ export function ScansPage() {
   const selectedWorkspace = enabledWorkspaces.find(
     (workspace) => workspace.id === effectiveWorkspaceId,
   );
+  const usesActiveTests = profile === "safe" || profile === "ctf";
   const requestCeiling = Math.min(
-    maxRequests + (profile === "safe" ? maxActiveTests : 0),
+    maxRequests + (usesActiveTests ? maxActiveTests : 0),
     selectedWorkspace
       ? selectedWorkspace.request_budget - selectedWorkspace.requests_used
-      : maxRequests + (profile === "safe" ? maxActiveTests : 0),
+      : maxRequests + (usesActiveTests ? maxActiveTests : 0),
   );
   const canSubmit = Boolean(
     effectiveProjectId &&
@@ -272,13 +284,18 @@ export function ScansPage() {
         execute_javascript: false,
       },
       active_test_policy: {
-        enabled: profile === "safe",
+        enabled: usesActiveTests,
         max_tests: maxActiveTests,
         max_tests_per_parameter: 6,
         allow_limited_timing: false,
       },
       authorization_confirmed: true,
-      confirmation_phrase: profile === "safe" ? "START SAFE SCAN" : "START PASSIVE SCAN",
+      confirmation_phrase:
+        profile === "safe"
+          ? "START SAFE SCAN"
+          : profile === "ctf"
+            ? "START CTF SCAN"
+            : "START PASSIVE SCAN",
       expected_use: expectedUse.trim(),
     });
   };
@@ -327,11 +344,16 @@ export function ScansPage() {
                   <select
                     aria-label="Scan profile"
                     value={profile}
-                    onChange={(event) => setProfile(event.target.value as "passive" | "safe")}
+                    onChange={(event) =>
+                      setProfile(event.target.value as "passive" | "safe" | "ctf")
+                    }
                     className={`${fieldClass} mt-1.5`}
                   >
                     <option value="passive">PASSIVE · inventory only</option>
                     <option value="safe">SAFE · plan then approve tests</option>
+                    {ctfModeEnabled && (
+                      <option value="ctf">CTF · auto-run read-only probes</option>
+                    )}
                   </select>
                 </label>
                 <label className="block text-xs text-slate-400">
@@ -387,7 +409,7 @@ export function ScansPage() {
                   <label className="text-xs text-slate-400">Requests<input aria-label="Maximum requests" type="number" min={1} max={300} value={maxRequests} onChange={(event) => setMaxRequests(event.currentTarget.valueAsNumber)} className={`${fieldClass} mt-1.5`} /></label>
                   <label className="text-xs text-slate-400">Req / sec<input aria-label="Requests per second" type="number" min={0.1} max={5} step={0.1} value={requestsPerSecond} onChange={(event) => setRequestsPerSecond(event.currentTarget.valueAsNumber)} className={`${fieldClass} mt-1.5`} /></label>
                 </div>
-                {profile === "safe" && (
+                {usesActiveTests && (
                   <label className="block text-xs text-slate-400">
                     Maximum active tests
                     <input aria-label="Maximum active tests" type="number" min={1} max={10} value={maxActiveTests} onChange={(event) => setMaxActiveTests(event.currentTarget.valueAsNumber)} className={`${fieldClass} mt-1.5`} />
@@ -403,6 +425,7 @@ export function ScansPage() {
                     <li>Logout-like routes skipped; JavaScript disabled</li>
                     <li>Redirect target fully revalidated before use</li>
                     {profile === "safe" && <li>{maxActiveTests} low-risk tests maximum; none run before separate approval</li>}
+                    {profile === "ctf" && <li>{maxActiveTests} read-only probes maximum; auto-approved and run unattended on the authorized target</li>}
                   </ul>
                 </div>
                 <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-line p-3 text-xs leading-5 text-slate-400">

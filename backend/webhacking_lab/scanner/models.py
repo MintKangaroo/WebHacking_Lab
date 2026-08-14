@@ -68,13 +68,17 @@ class ScanJobCreate(ScannerModel):
         phrase = {
             ScannerProfile.PASSIVE: "START PASSIVE SCAN",
             ScannerProfile.SAFE: "START SAFE SCAN",
+            ScannerProfile.CTF: "START CTF SCAN",
         }.get(self.profile)
         if phrase is not None and self.confirmation_phrase != phrase:
             raise ValueError(f"confirmation_phrase must be {phrase!r}")
         if self.profile == ScannerProfile.PASSIVE and self.active_test_policy.enabled:
             raise ValueError("Passive scans cannot enable active tests")
-        if self.profile == ScannerProfile.SAFE and not self.active_test_policy.enabled:
-            raise ValueError("SAFE scans require active_test_policy.enabled=true")
+        if (
+            self.profile in {ScannerProfile.SAFE, ScannerProfile.CTF}
+            and not self.active_test_policy.enabled
+        ):
+            raise ValueError("SAFE and CTF scans require active_test_policy.enabled=true")
         return self
 
 

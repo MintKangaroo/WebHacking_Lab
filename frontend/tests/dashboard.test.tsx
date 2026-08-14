@@ -10,6 +10,7 @@ const dashboardFixture: DashboardOverview = {
   safety: {
     mode: "Analysis Only",
     network_execution_enabled: false,
+    ctf_mode_enabled: false,
     insecure_tls_allowed: false,
     max_response_bytes: 2_097_152,
     global_requests_per_minute: 30,

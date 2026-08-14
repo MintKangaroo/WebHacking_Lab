@@ -15,7 +15,7 @@ export type CreateScanInput = {
   project_id: string;
   workspace_id: string;
   target: string;
-  profile: Extract<ScannerProfile, "passive" | "safe">;
+  profile: Extract<ScannerProfile, "passive" | "safe" | "ctf">;
   crawl_policy: CrawlPolicy;
   active_test_policy: {
     enabled: boolean;
@@ -24,7 +24,7 @@ export type CreateScanInput = {
     allow_limited_timing: false;
   };
   authorization_confirmed: true;
-  confirmation_phrase: "START PASSIVE SCAN" | "START SAFE SCAN";
+  confirmation_phrase: "START PASSIVE SCAN" | "START SAFE SCAN" | "START CTF SCAN";
   expected_use: string;
 };
 

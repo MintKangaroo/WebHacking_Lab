@@ -28,7 +28,7 @@ from webhacking_lab.http_client.client import SingleHopSender
 from webhacking_lab.http_client.models import NormalizedRequest, NormalizedResponse
 from webhacking_lab.http_client.request_normalizer import render_raw_request
 from webhacking_lab.http_client.scope_guard import DnsResolver, ScopeGuard
-from webhacking_lab.scanner.execution_policy import build_safe_test_request
+from webhacking_lab.scanner.execution_policy import build_test_request
 from webhacking_lab.scanner.models import ActiveTestPolicy, HttpExchange, ScanContext
 from webhacking_lab.scanner.plugins import PLUGIN_BY_ID
 from webhacking_lab.services.http_requests import HttpRequestService
@@ -171,9 +171,10 @@ class SafeActiveScanEngine:
             max_requests=test.maximum_requests,
             destructive=test.destructive,
         )
-        mutated = build_safe_test_request(
+        mutated = build_test_request(
             NormalizedRequest.model_validate(baseline_request.normalized_json),
             test_case,
+            profile=job.profile,
         )
         if render_raw_request(mutated) != test.exact_request_preview:
             raise ExecutionPolicyError("Persisted exact request preview no longer matches policy")

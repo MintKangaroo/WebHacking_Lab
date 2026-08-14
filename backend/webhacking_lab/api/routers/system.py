@@ -28,6 +28,7 @@ def safety_status(settings: Settings) -> SafetyStatus:
     return SafetyStatus(
         mode="Analysis Only" if settings.analysis_only else "Controlled Execution",
         network_execution_enabled=settings.network_execution_enabled,
+        ctf_mode_enabled=settings.ctf_mode_enabled,
         insecure_tls_allowed=settings.allow_insecure_tls,
         max_response_bytes=settings.max_response_bytes,
         global_requests_per_minute=settings.global_requests_per_minute,

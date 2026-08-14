@@ -204,13 +204,14 @@ def _wait_for_terminal(client: TestClient, scan_id: str) -> dict[str, object]:
 
 
 @contextmanager
-def scanner_client() -> Iterator[tuple[TestClient, ScannerSender]]:
+def scanner_client(*, ctf_mode: bool = False) -> Iterator[tuple[TestClient, ScannerSender]]:
     with TemporaryDirectory(prefix="webhacking-scanner-test-") as directory:
         settings = Settings(
             environment="test",
             database_url=f"sqlite+aiosqlite:///{directory}/scanner.db",
             analysis_only=False,
             network_execution_enabled=True,
+            ctf_mode_enabled=ctf_mode,
             global_requests_per_minute=120,
         )
         sender = ScannerSender()
@@ -274,7 +275,7 @@ def test_scanner_rejects_out_of_scope_and_unsupported_profiles() -> None:
             workspace_id,
             "https://authorized.example/",
         )
-        active_payload["profile"] = "ctf"
+        active_payload["profile"] = "local_lab"
         active = client.post("/api/scans", json=active_payload)
         assert active.status_code == 403
         assert sender.calls == []
@@ -374,6 +375,85 @@ def test_safe_scan_stops_for_exact_approval_then_records_runtime_evidence() -> N
         assert "scan.tests_planned" in audit_types
         assert "scan.tests_approved" in audit_types
         assert "scan.test_completed" in audit_types
+
+
+def test_ctf_scan_auto_registers_scope_and_runs_probes_unattended() -> None:
+    with scanner_client(ctf_mode=True) as (client, sender):
+        project_id, workspace_id = _prepare_target(client)
+        # A host that was never added to scope: CTF mode must auto-register it.
+        payload = _scan_payload(
+            project_id,
+            workspace_id,
+            "https://ctf.example/?id=1&q=hello",
+        )
+        payload.update(
+            {
+                "profile": "ctf",
+                "confirmation_phrase": "START CTF SCAN",
+                "active_test_policy": {
+                    "enabled": True,
+                    "max_tests": 6,
+                    "max_tests_per_parameter": 6,
+                    "allow_limited_timing": False,
+                },
+            }
+        )
+        created = client.post(
+            "/api/scans",
+            json=payload,
+            headers={"X-Correlation-ID": "ctf-scan-test"},
+        )
+        assert created.status_code == 202, created.text
+        scan_id = created.json()["id"]
+
+        terminal = _wait_for_terminal(client, scan_id)
+        assert terminal["status"] == "completed", terminal
+        # One crawl request plus the auto-approved probes, all sent without a manual step.
+        assert terminal["requests_used"] >= 2
+        assert sender.calls, "CTF probes were never sent"
+
+        tests = client.get(f"/api/scans/{scan_id}/tests").json()
+        assert tests, "CTF plan produced no probes"
+        assert {item["plugin_id"] for item in tests} <= {
+            "ctf-sql-injection",
+            "ctf-reflected-xss",
+            "ctf-path-traversal",
+            "ctf-open-redirect",
+        }
+        # Every probe was auto-approved and executed; none waited for approval.
+        assert all(item["status"] in {"completed", "blocked"} for item in tests)
+        assert all(item["approved_at"] is not None for item in tests)
+
+        findings = client.get(f"/api/scans/{scan_id}/findings").json()
+        analyzers = {item["analyzer"] for item in findings}
+        assert "ctf-sql-injection" in analyzers
+
+        # The pasted target host was registered as an authorized scope rule.
+        scope = client.get(f"/api/projects/{project_id}/scope").json()
+        hostnames = {rule["hostname"] for rule in scope}
+        assert "ctf.example" in hostnames
+
+        audits = client.get("/api/audit-events?limit=200").json()
+        audit_types = {item["event_type"] for item in audits}
+        assert "scan.tests_approved" in audit_types
+        assert "scan.test_completed" in audit_types
+
+
+def test_ctf_scan_requires_ctf_mode_enabled() -> None:
+    with scanner_client(ctf_mode=False) as (client, sender):
+        project_id, workspace_id = _prepare_target(client)
+        payload = _scan_payload(project_id, workspace_id, "https://authorized.example/?id=1")
+        payload.update(
+            {
+                "profile": "ctf",
+                "confirmation_phrase": "START CTF SCAN",
+                "active_test_policy": {"enabled": True},
+            }
+        )
+        blocked = client.post("/api/scans", json=payload)
+        assert blocked.status_code == 403
+        assert blocked.json()["code"] == "execution_blocked"
+        assert sender.calls == []
 
 
 def test_safe_test_approval_rejects_foreign_and_duplicate_ids() -> None:

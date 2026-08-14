@@ -88,6 +88,8 @@ POST /api/scans/{scan_id}/cancel
 
 SAFE를 시작하려면 `profile`을 `safe`, 확인 문구를 `START SAFE SCAN`, `active_test_policy.enabled`를 `true`로 설정합니다. 수집이 끝나면 작업은 `waiting_for_approval`에서 멈춥니다.
 
+CTF를 시작하려면 서버에 `WEBHACKING_CTF_MODE_ENABLED=true`가 설정되어 있어야 하며, `profile`을 `ctf`, 확인 문구를 `START CTF SCAN`, `active_test_policy.enabled`를 `true`로 설정합니다. CTF는 붙여넣은 대상 호스트를 인가된 Scope 규칙으로 자동 등록하고, 워크스페이스 네트워크 실행을 자동 활성화하며, 계획된 read-only 프로브를 자동 승인해 무인 실행합니다(별도 `approve-tests` 호출 불필요). 작업은 `active_testing`을 거쳐 `completed`로 끝납니다. Scope Guard의 SSRF/사설·메타데이터 IP 차단, 마스킹, 레이트 리밋, 감사 로그는 유지됩니다.
+
 ```http
 POST /api/scans/{scan_id}/approve-tests
 Content-Type: application/json
@@ -99,7 +101,7 @@ Content-Type: application/json
 }
 ```
 
-선택한 Preview만 각각 한 요청으로 실행됩니다. `ctf`, `local_lab`, browser JavaScript, limited timing과 extraction은 아직 차단됩니다. 외부 호스트는 권한 확인이 저장된 Scope 안에 있어야 합니다. Crawl redirect는 매 hop을 재검사하고, SAFE 관찰 요청은 redirect를 따라가지 않은 채 첫 응답 증거만 저장합니다.
+선택한 Preview만 각각 한 요청으로 실행됩니다. `local_lab` 프로필, browser JavaScript, limited timing과 extraction은 아직 차단됩니다. SAFE에서는 외부 호스트가 권한 확인이 저장된 Scope 안에 있어야 하며, CTF에서는 이 Scope 등록이 자동으로 수행됩니다. Crawl redirect는 매 hop을 재검사하고, SAFE 관찰 요청은 redirect를 따라가지 않은 채 첫 응답 증거만 저장합니다.
 
 ## Source Code Analysis
 
