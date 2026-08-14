@@ -1,0 +1,98 @@
+# PHASE 2 — 축 D/F/G 잔여: 탐지 정합성 · Rate/Gate · Redaction · 운영
+
+---
+
+## 1. [검증됨·정상] 단일 게이트 강제 — 크롤러/액티브/수동 모두 동일 경로
+
+`THREAT_MODEL.md:43` "one guarded client injected into all execution-capable
+services"를 코드로 확인:
+
+- Passive 크롤러 fetch는 `RequestExecutionService.execute`를 경유
+  (`scanner/engine.py:411`).
+- `execute` 내부에서 실제 send가 `self._gate.slot(...)` + `consume_request_budget`
+  로 감싸진다(`services/request_execution.py:380-388`).
+- 액티브 테스트도 동일 서비스 사용(`scanner/active_engine.py:203-232`), 수동
+  리피터도 동일.
+
+→ **rate limit / scope guard / 예산을 우회하는 아웃바운드 경로 없음.** 크롤러는
+추가로 `requests_per_second` 페이싱까지 적용(`engine.py:178-184`). Logout 유사
+경로는 요청하지 않고 기록만 한다(`engine.py:383-388`).
+
+### 1a. [LOW] Rate 게이트의 target_key 분할 가능성
+`_gate.slot`의 `target_key`는 `scheme://netloc`(`request_execution.py:379`).
+동일 호스트를 `example.com`과 `example.com:80`처럼 다른 표기로 접근하면 별도
+target 버킷이 되어 **target별** rate가 갈릴 수 있다. 단 **전역 상한
+`global_per_minute`은 표기와 무관하게 항상 적용**되므로 총 트래픽은 여전히
+bounded. 영향 낮음. `RateLimitError`로 fail-fast(큐잉 없음)라 은닉 트래픽도 없음
+(`core/rate_limit.py:35-51`). README `:345`가 단일 인스턴스 한정임을 이미 명시.
+
+---
+
+## 2. [검증됨·정상] 스캐너 플러그인 판정은 죽지 않았고 과대주장도 안 함
+
+`backend/tests/test_safe_scanner_plugins.py` 실행: **통과(15 passed).**
+
+- SQL 플러그인: 오류 시그널→`CONFIRMED`, boolean 차이→`LIKELY`, 무신호→
+  `FALSE_POSITIVE`로 정확히 구분(`test:154-179`).
+- reflection/redirect/CORS 플러그인: 신호를 과장하지 않음(대부분 `LIKELY`,
+  무신호는 `FALSE_POSITIVE`)(`test:183-226`).
+- Security header 어댑터: **요청을 절대 생성하지 않음**→`NOT_TESTED`
+  (`test:230-234`).
+- 플래너: 정확히 6개 프리뷰 생성, 시크릿 파라미터는 건너뜀(`test:123`).
+
+→ 판정 등급이 증거 강도에 맞게 보정되어 있고 회귀 테스트로 고정. 탐지가
+"의도보다 쉽게/과하게" 확정되는 지점 없음.
+
+---
+
+## 3. Redaction / 로그 시크릿 노출 (축 D/G)
+
+### 3-1. [검증됨·정상] 구조화 데이터·헤더·쿠키 마스킹
+`core/redaction.py` + `test_redaction_and_normalization.py` 실행: **통과.**
+- 헤더/쿠키/폼/JSON은 sensitive 키·suffix(`-token`/`-secret`/`-key`)로 마스킹
+  (`redaction.py:41-90`). 쿠키는 이름·속성 보존, 값만 제거(`:48-69`).
+- 감사 로그 `details`는 method/hostname/status_code/reason 등 **allowlist 필드만**
+  저장(`request_execution.py`, `scans.py`의 `_audit.record` 호출부). 요청 body나
+  raw 토큰을 details에 넣는 지점 없음. 앱 미들웨어 로그도 method/path/status만
+  기록(`api/app.py:102-108`). → THREAT_MODEL `:34` "allowlist logging" 유지.
+
+### 3-2. [LOW] 비구조화 텍스트/값-형태 시크릿은 best-effort
+- `redact_text`의 `ASSIGNMENT_PATTERN`은 `password|passwd|api_key|access_token|
+  refresh_token|secret`만 잡는다(`redaction.py:35-38`). **평문 body 안의 bare
+  `Authorization`, `token`, `Bearer eyJ...`, JWT 형태 문자열은 마스킹되지 않는다.**
+- `redact_mapping`은 JSON을 **키 이름 기준**으로만 마스킹(`:93-105`) — 비민감
+  키(`"data"`)에 담긴 토큰 값은 통과.
+
+영향: 외부 실행은 body를 아예 전송하지 않고(`request_execution.py:96-97`), import된
+자격증명 헤더는 구조화 마스킹으로 처리되므로 실 위험은 낮다. 다만 사용자가 평문
+body/비민감 JSON 키에 시크릿을 붙여넣어 저장하면 `[REDACTED]` 없이 DB에 남을 수
+있다. README `:66`의 "token 계열 값은 저장 전 `[REDACTED]`" 문구는 **키 기반에
+한정**됨을 명확히 하는 편이 정확하다. 순수 하드 결함은 아님(문서 정밀도 + 경미한
+커버리지 갭).
+
+---
+
+## 4. 운영·재현성 (축 F)
+
+- **이미지 태그 고정**: `python:3.12-slim`, `node:20-alpine`,
+  `nginxinc/nginx-unprivileged:1.29-alpine`(`backend/Dockerfile:1,15,32`,
+  `frontend/Dockerfile:1,9`). **`latest` 미사용**(랩이 갑자기 안 뜨거나 취약점이
+  사라지는 위험 없음). 단 **digest 미고정**이라 minor 패치 드리프트는 가능 —
+  재현성 관점 LOW.
+- **단일 명령 기동**: `docker compose up --build`(`README.md:33`).
+- **리셋/시드 멱등성**: 시드 데이터·취약 챌린지가 없으므로 "사용자가 DB를
+  망가뜨려 복구 불가" 시나리오의 대상은 앱 상태 DB(named volume `webhacking_data`)
+  뿐. `docker compose down -v`로 초기화. 취약 랩 리셋 요구사항은 랩 구현(Phase 6)
+  전까지 해당 없음.
+- **컨테이너 하드닝**: `read_only`, `cap_drop: ALL`, `no-new-privileges`
+  (`docker-compose.yml:19-25,49-61`) — THREAT_MODEL `:41` "Lab breakout" 통제와
+  일치.
+
+---
+
+## UNVERIFIED (이 축)
+- `_gate`가 **프로세스 전역 단일 인스턴스** 상태라 다중 워커(gunicorn -w N)
+  배포 시 전역 상한이 워커별로 분리됨 — README `:345`가 인정한 한계. 실제 배포
+  Dockerfile의 워커 수 미확인.
+- Redaction의 값-형태(entropy/JWT) 탐지 부재가 실제 저장 데이터에서 문제가 되는지
+  end-to-end 미검증.

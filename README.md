@@ -139,7 +139,9 @@ CTF 대회처럼 이미 대상 권한이 있을 때는 승인 절차를 생략�
 
 CTF 액티브 플러그인은 실제 탐지 페이로드를 보냅니다: SQL 오류/UNION/boolean 프로브, `<script>` 반사 marker XSS, `/etc/passwd` 경로 탐색, 예약 호스트 open redirect. 각 프로브는 **단일 GET 한 건**이며 쿼리 파라미터 하나만 치환하고, 요청 본문·자격증명을 재전송하지 않습니다. `DROP`/`DELETE`/`SLEEP`/`INTO OUTFILE` 등 상태를 변경·지연·삭제하는 값은 CTF 비파괴 정책이 계속 차단합니다.
 
-완화되는 것은 **인가·승인 절차뿐**입니다. Scope Guard의 SSRF·사설/메타데이터 IP 차단, 민감정보 마스킹, 전역·Scope 레이트 리밋, 감사 로그는 그대로 적용됩니다. 본인이 소유했거나 명시적 허가를 받은 대상에만 사용하세요.
+완화되는 것은 **인가·승인 절차뿐**입니다. Scope Guard의 SSRF 방어(HTTP(S)-only, userinfo 차단, DNS 응답 IP 검사, **cloud metadata·link-local·multicast·reserved·unspecified 대역 차단**), 민감정보 마스킹, 전역·Scope 레이트 리밋, 감사 로그는 그대로 적용됩니다.
+
+> **주의 — 사설/loopback 대역은 차단되지 않습니다.** Scope Guard는 내부대역 denylist가 아니라 **allowlist(Scope 규칙 기반)**로 동작합니다. `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` 같은 RFC1918 사설 IP와 `127.0.0.1` loopback은 IP 정책에서 차단되지 않으며, Scope 규칙에 등록되면(로컬 랩) 또는 CTF 프로필에서 붙여넣으면(자동 등록) 도달 가능합니다. 이는 로컬 랩과 HackTheBox류 VPN 대상(`10.10.x.x`)을 지원하기 위한 **의도된 동작**입니다. 따라서 CTF 프로필에 **내부 주소를 붙여넣으면 추가 확인 없이 해당 내부 호스트로 read-only 프로브가 무인 발사**됩니다. 본인이 소유했거나 명시적 허가를 받은 대상에만 사용하세요.
 
 ### 4. 소스코드를 실행하지 않고 구조 분석하기
 
@@ -160,7 +162,7 @@ CTF 액티브 플러그인은 실제 탐지 페이로드를 보냅니다: SQL �
 
 - 프로젝트, 워크스페이스, 요청 예산, optimistic locking
 - loopback 기본 Scope와 권한 확인이 필요한 외부 Scope
-- SSRF 방지 URL/DNS/IP/metadata/link-local 정책
+- SSRF 방지 정책: Scope allowlist + HTTP(S)-only/userinfo 차단 + DNS 응답 IP 검사로 metadata·link-local·multicast·reserved·unspecified 대역 차단 (사설/loopback은 allowlist·CTF 등록 시 도달 가능 — 위 CTF 프로필 주의 참고)
 - DNS-pinned HTTPX 클라이언트와 리다이렉트 재검사
 - cURL/HAR 가져오기, Raw/구조화 HTTP 정규화, multimap 보존
 - 헤더·Cookie·Query·JSON/Form 본문·감사 로그 마스킹
