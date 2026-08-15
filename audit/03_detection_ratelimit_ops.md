@@ -18,13 +18,24 @@ services"를 코드로 확인:
 추가로 `requests_per_second` 페이싱까지 적용(`engine.py:178-184`). Logout 유사
 경로는 요청하지 않고 기록만 한다(`engine.py:383-388`).
 
-### 1a. [LOW] Rate 게이트의 target_key 분할 가능성
-`_gate.slot`의 `target_key`는 `scheme://netloc`(`request_execution.py:379`).
-동일 호스트를 `example.com`과 `example.com:80`처럼 다른 표기로 접근하면 별도
-target 버킷이 되어 **target별** rate가 갈릴 수 있다. 단 **전역 상한
-`global_per_minute`은 표기와 무관하게 항상 적용**되므로 총 트래픽은 여전히
-bounded. 영향 낮음. `RateLimitError`로 fail-fast(큐잉 없음)라 은닉 트래픽도 없음
-(`core/rate_limit.py:35-51`). README `:345`가 단일 인스턴스 한정임을 이미 명시.
+### 1a. [LOW · 조치 완료 2026-08-15] Rate 게이트의 target_key 분할 가능성
+기존: `_gate.slot`의 `target_key`가 `scheme://netloc`(원문 그대로)이라, 동일
+호스트를 `example.com`과 `example.com:80`처럼 다른 표기로 접근하면 별도 target
+버킷이 되어 **target별** rate가 갈릴 수 있었다. (전역 상한 `global_per_minute`은
+항상 적용되므로 총 트래픽은 이미 bounded, `RateLimitError` fail-fast로 은닉
+트래픽 없음 — 그래서 LOW.)
+
+- **[조치]** `request_execution._rate_bucket_key(url, hostname)` 헬퍼를 추가해
+  버킷 키를 **정규화**: Scope Guard가 소문자화한 `decision.hostname`과 스킴
+  기본 포트(http=80, https=443)를 접어 `scheme://host:port` 형태로 생성. 이제
+  `example.com` ≡ `example.com:80`(http), 대소문자 변형이 하나의 버킷으로 수렴.
+  실제 다른 포트(`:8080`)는 여전히 별개 버킷. 모든 아웃바운드 경로(수동/크롤러/
+  액티브)가 `RequestExecutionService`를 통과하므로 단일 지점 수정으로 일괄 적용.
+  회귀 테스트 추가(`tests/test_request_execution.py`).
+- **범위 밖(미조치, 문서 유지)**: 다중 워커(gunicorn -w N) 간 **프로세스 전역**
+  rate 공유는 여전히 미지원 — 공유 저장소(Redis 등) 필요. README `:345`가 단일
+  인스턴스 한정임을 이미 명시하므로 과대주장 아님. 완전 분산 rate가 필요하면
+  별도 인프라 도입이 전제.
 
 ---
 

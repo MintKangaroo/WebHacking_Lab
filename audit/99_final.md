@@ -70,8 +70,11 @@
   회귀 테스트 추가, 전체 스위트 133 passed.
 - 상세: `audit/03` §3-2.
 
-### 3-3. [LOW] Rate 게이트 target_key 분할 / 3-4. [LOW · 결정 완료] Docker digest 미고정 / 3-5. [LOW · 조치 완료] IPv4·IPv6 loopback 처리 비일관
-- 3-3: `audit/03` §1a 참조. 저위험, 미조치.
+### 3-3. [LOW · 조치 완료] Rate 게이트 target_key 분할 / 3-4. [LOW · 결정 완료] Docker digest 미고정 / 3-5. [LOW · 조치 완료] IPv4·IPv6 loopback 처리 비일관
+- **3-3 [조치 완료 2026-08-15]**: `_rate_bucket_key()`로 버킷 키를 정규화해
+  `example.com` ≡ `example.com:80`(및 대소문자)가 하나의 target rate 버킷으로
+  수렴. 다른 포트는 별개 유지. 다중 워커 분산 rate(Redis 필요)는 범위 밖으로
+  유지(README `:345` 단일 인스턴스 한정 명시). 상세: `audit/03` §1a.
 - **3-4 [결정 2026-08-15]**: digest 미고정을 **의도된 선택**으로 확정. 방어형
   도구는 베이스 이미지 최신 보안 패치 수신이 digest 동결보다 이득이 크므로
   minor 태그 고정을 유지한다. 상세: `audit/03` §4.
