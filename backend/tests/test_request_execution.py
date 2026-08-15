@@ -11,6 +11,7 @@ from webhacking_lab.core.config import Settings
 from webhacking_lab.core.rate_limit import RequestGate
 from webhacking_lab.domain.exceptions import RateLimitError
 from webhacking_lab.http_client.client import SingleHopSender, TransportResult
+from webhacking_lab.services.request_execution import _rate_bucket_key
 
 
 class FakeResolver:
@@ -206,6 +207,18 @@ def test_server_default_prevents_workspace_execution_enable(client: TestClient) 
     )
     assert response.status_code == 403
     assert response.json()["code"] == "execution_blocked"
+
+
+def test_rate_bucket_key_collapses_equivalent_authorities() -> None:
+    # Default-port and case variants must map to one per-target rate bucket so
+    # a caller cannot split a target's rate by re-spelling the authority.
+    implicit = _rate_bucket_key("http://example.com/a", "example.com")
+    explicit = _rate_bucket_key("http://example.com:80/b", "example.com")
+    assert implicit == explicit == "http://example.com:80"
+    https_default = _rate_bucket_key("https://example.com/", "example.com")
+    assert https_default == "https://example.com:443"
+    # A genuinely different port stays a distinct bucket.
+    assert _rate_bucket_key("http://example.com:8080/", "example.com") != implicit
 
 
 @pytest.mark.asyncio

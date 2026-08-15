@@ -121,6 +121,31 @@ async def test_loopback_literal_requires_explicit_rule() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ipv6_loopback_is_treated_like_ipv4_loopback() -> None:
+    # ``::1`` is flagged is_reserved while 127.0.0.1 is not; both are loopback
+    # and must reach the same allowlist decision (registered rule -> allowed).
+    guard = ScopeGuard()
+    denied = await guard.check("http://[::1]:5000/", [])
+    allowed = await guard.check(
+        "http://[::1]:5000/",
+        [ScopeRuleSpec(scheme="http", hostname="::1", port=5000)],
+    )
+    assert denied.code == "not_in_scope"
+    assert allowed.allowed is True
+
+
+@pytest.mark.asyncio
+async def test_reserved_non_loopback_ipv6_answer_is_still_blocked() -> None:
+    # The loopback exemption must not reopen the rest of the reserved space.
+    rule = ScopeRuleSpec(scheme="http", hostname="lab.example")
+    decision = await ScopeGuard(FakeResolver(["100::1"])).check(
+        "http://lab.example/", [rule]
+    )
+    assert decision.allowed is False
+    assert decision.code == "ip_policy_blocked"
+
+
+@pytest.mark.asyncio
 async def test_scope_rule_without_port_allows_registered_host_on_any_port() -> None:
     decision = await ScopeGuard().check(
         "http://127.0.0.1:5000/",

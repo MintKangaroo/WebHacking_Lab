@@ -62,6 +62,20 @@ REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 MAX_REQUESTS_PER_APPROVAL = 5
 
 
+def _rate_bucket_key(url: str, hostname: str) -> str:
+    """Normalize an authority so equivalent spellings share one rate bucket.
+
+    Uses the Scope Guard's already-lowercased ``hostname`` and folds the scheme
+    default port, so ``example.com`` and ``example.com:80`` (over http) — and
+    case variants — cannot split into separate per-target rate buckets.
+    """
+
+    parsed = urlsplit(url)
+    scheme = parsed.scheme.lower()
+    port = parsed.port or (80 if scheme == "http" else 443)
+    return f"{scheme}://{hostname}:{port}"
+
+
 def _is_local_target(hostname: str, mode: WorkspaceMode) -> bool:
     if hostname == "localhost" or hostname.endswith(".localhost"):
         return True
@@ -375,8 +389,7 @@ class RequestExecutionService:
         try:
             for request_number in range(maximum_request_count):
                 decision, rule = await self._scope_decision(current_url, workspace, rules)
-                parsed_target = urlsplit(current_url)
-                target_key = f"{parsed_target.scheme}://{parsed_target.netloc}"
+                target_key = _rate_bucket_key(current_url, decision.hostname or "")
                 async with self._gate.slot(
                     target_key,
                     global_per_minute=self._settings.global_requests_per_minute,

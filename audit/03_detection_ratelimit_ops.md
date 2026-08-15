@@ -18,13 +18,24 @@ services"를 코드로 확인:
 추가로 `requests_per_second` 페이싱까지 적용(`engine.py:178-184`). Logout 유사
 경로는 요청하지 않고 기록만 한다(`engine.py:383-388`).
 
-### 1a. [LOW] Rate 게이트의 target_key 분할 가능성
-`_gate.slot`의 `target_key`는 `scheme://netloc`(`request_execution.py:379`).
-동일 호스트를 `example.com`과 `example.com:80`처럼 다른 표기로 접근하면 별도
-target 버킷이 되어 **target별** rate가 갈릴 수 있다. 단 **전역 상한
-`global_per_minute`은 표기와 무관하게 항상 적용**되므로 총 트래픽은 여전히
-bounded. 영향 낮음. `RateLimitError`로 fail-fast(큐잉 없음)라 은닉 트래픽도 없음
-(`core/rate_limit.py:35-51`). README `:345`가 단일 인스턴스 한정임을 이미 명시.
+### 1a. [LOW · 조치 완료 2026-08-15] Rate 게이트의 target_key 분할 가능성
+기존: `_gate.slot`의 `target_key`가 `scheme://netloc`(원문 그대로)이라, 동일
+호스트를 `example.com`과 `example.com:80`처럼 다른 표기로 접근하면 별도 target
+버킷이 되어 **target별** rate가 갈릴 수 있었다. (전역 상한 `global_per_minute`은
+항상 적용되므로 총 트래픽은 이미 bounded, `RateLimitError` fail-fast로 은닉
+트래픽 없음 — 그래서 LOW.)
+
+- **[조치]** `request_execution._rate_bucket_key(url, hostname)` 헬퍼를 추가해
+  버킷 키를 **정규화**: Scope Guard가 소문자화한 `decision.hostname`과 스킴
+  기본 포트(http=80, https=443)를 접어 `scheme://host:port` 형태로 생성. 이제
+  `example.com` ≡ `example.com:80`(http), 대소문자 변형이 하나의 버킷으로 수렴.
+  실제 다른 포트(`:8080`)는 여전히 별개 버킷. 모든 아웃바운드 경로(수동/크롤러/
+  액티브)가 `RequestExecutionService`를 통과하므로 단일 지점 수정으로 일괄 적용.
+  회귀 테스트 추가(`tests/test_request_execution.py`).
+- **범위 밖(미조치, 문서 유지)**: 다중 워커(gunicorn -w N) 간 **프로세스 전역**
+  rate 공유는 여전히 미지원 — 공유 저장소(Redis 등) 필요. README `:345`가 단일
+  인스턴스 한정임을 이미 명시하므로 과대주장 아님. 완전 분산 rate가 필요하면
+  별도 인프라 도입이 전제.
 
 ---
 
@@ -66,9 +77,18 @@ bounded. 영향 낮음. `RateLimitError`로 fail-fast(큐잉 없음)라 은닉 �
 영향: 외부 실행은 body를 아예 전송하지 않고(`request_execution.py:96-97`), import된
 자격증명 헤더는 구조화 마스킹으로 처리되므로 실 위험은 낮다. 다만 사용자가 평문
 body/비민감 JSON 키에 시크릿을 붙여넣어 저장하면 `[REDACTED]` 없이 DB에 남을 수
-있다. README `:66`의 "token 계열 값은 저장 전 `[REDACTED]`" 문구는 **키 기반에
-한정**됨을 명확히 하는 편이 정확하다. 순수 하드 결함은 아님(문서 정밀도 + 경미한
-커버리지 갭).
+있었다.
+
+- **[조치 완료 2026-08-15]** 키 이름에 의존하지 않는 **값-형태 탐지**를 추가해
+  해소. `redaction.py`에 (a) JWT 패턴(`eyJ...` 3분절), (b) `Bearer`/`Basic`
+  자격증명, (c) 고엔트로피 토큰(길이 ≥32, 숫자+문자 혼합, Shannon ≥3.5) 탐지를
+  넣고 `redact_value_shapes()`로 묶었다. 이를 `redact_text`(평문 body),
+  `redact_mapping`의 **문자열 리프**(비민감 JSON 키 값), `redact_pairs`의 비민감
+  쿼리/헤더 값 경로 전부에 적용. 저엔트로피 산문·짧은 값·숫자 없는 소문자 런은
+  분석 가치를 위해 보존된다(회귀 테스트 3건 추가,
+  `tests/test_redaction_and_normalization.py`). 잔여 트레이드오프: 40자 hex
+  git SHA 등 고엔트로피 식별자는 보수적으로 마스킹될 수 있음(세션 토큰 오인
+  방지를 우선한 의도된 동작).
 
 ---
 
@@ -79,6 +99,13 @@ body/비민감 JSON 키에 시크릿을 붙여넣어 저장하면 `[REDACTED]` �
   `frontend/Dockerfile:1,9`). **`latest` 미사용**(랩이 갑자기 안 뜨거나 취약점이
   사라지는 위험 없음). 단 **digest 미고정**이라 minor 패치 드리프트는 가능 —
   재현성 관점 LOW.
+- **[결정 2026-08-15] digest 미고정은 의도된 선택으로 확정.** 이 저장소는 방어형
+  보안 분석 도구이므로 베이스 이미지가 **최신 보안 패치**를 계속 받는 편이
+  digest를 얼려 재현성을 극대화하는 것보다 이득이 크다. `@sha256:` 고정은
+  패치 드리프트를 막는 대신 베이스 이미지 취약점을 그대로 동결하므로 채택하지
+  않는다. minor 태그(예: `3.12-slim`) 고정으로 "갑자기 안 뜸/취약점 소실" 위험은
+  이미 차단되어 있어 잔여 재현성 리스크는 LOW로 수용한다. 완전한 비트 단위
+  재현이 필요한 배포에서는 배포 파이프라인에서 digest를 주입하는 것을 권장.
 - **단일 명령 기동**: `docker compose up --build`(`README.md:33`).
 - **리셋/시드 멱등성**: 시드 데이터·취약 챌린지가 없으므로 "사용자가 DB를
   망가뜨려 복구 불가" 시나리오의 대상은 앱 상태 DB(named volume `webhacking_data`)

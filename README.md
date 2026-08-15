@@ -63,7 +63,7 @@ curl 'http://127.0.0.1:5000/search?q=demo' \
   -H 'Authorization: Bearer demo-token'
 ```
 
-cURL은 명령으로 실행되지 않고 데이터로만 파싱됩니다. `Authorization`, Cookie, API Key, 토큰 계열 값은 저장 전에 `[REDACTED]` 처리됩니다.
+cURL은 명령으로 실행되지 않고 데이터로만 파싱됩니다. `Authorization`, Cookie, API Key, 토큰 계열 값은 저장 전에 `[REDACTED]` 처리됩니다. 키 이름뿐 아니라 JWT·`Bearer`/`Basic` 자격증명·고엔트로피 토큰 등 값의 형태로도 마스킹하므로, 비민감 키나 평문 본문에 섞인 시크릿도 걸러집니다.
 
 ### 2. 허가받은 외부 호스트에 제한적으로 요청하기
 

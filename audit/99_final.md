@@ -61,14 +61,27 @@
   paste-and-go 유지가 사용자 요구사항이므로. 잔여 위험(내부 주소 붙여넣기 시
   무인 프로빙)은 이제 문서에 정직하게 경고됨.
 
-### 3-2. [LOW] 비구조화 텍스트/비민감 JSON 키의 시크릿은 마스킹되지 않음
-- `redact_text`의 키워드가 좁고(`redaction.py:35-38`), `redact_mapping`은 키
-  기준(`:93-105`). 평문 body/비민감 키의 토큰은 `[REDACTED]` 없이 저장 가능.
-- 실 위험 완화 요인: 외부 실행은 body 미전송, 헤더 자격증명은 구조화 마스킹.
+### 3-2. [LOW · 조치 완료 2026-08-15] 비구조화 텍스트/비민감 JSON 키의 시크릿 마스킹
+- 기존: `redact_text`의 키워드가 좁고(`redaction.py`), `redact_mapping`은 키
+  기준이라 평문 body/비민감 키의 토큰이 `[REDACTED]` 없이 저장 가능했다.
+- **조치**: 키 이름 비의존 **값-형태 탐지**(JWT·`Bearer`/`Basic`·고엔트로피
+  토큰)를 `redact_value_shapes()`로 추가하고 `redact_text`/`redact_mapping`
+  문자열 리프/`redact_pairs` 비민감 값 경로에 적용. 저엔트로피 산문은 보존.
+  회귀 테스트 추가, 전체 스위트 133 passed.
 - 상세: `audit/03` §3-2.
 
-### 3-3. [LOW] Rate 게이트 target_key 분할 / 3-4. [LOW] Docker digest 미고정 / 3-5. [LOW] IPv4·IPv6 loopback 처리 비일관
-- 각각 `audit/03` §1a, §4, `audit/01` C-1 참조. 모두 저위험.
+### 3-3. [LOW · 조치 완료] Rate 게이트 target_key 분할 / 3-4. [LOW · 결정 완료] Docker digest 미고정 / 3-5. [LOW · 조치 완료] IPv4·IPv6 loopback 처리 비일관
+- **3-3 [조치 완료 2026-08-15]**: `_rate_bucket_key()`로 버킷 키를 정규화해
+  `example.com` ≡ `example.com:80`(및 대소문자)가 하나의 target rate 버킷으로
+  수렴. 다른 포트는 별개 유지. 다중 워커 분산 rate(Redis 필요)는 범위 밖으로
+  유지(README `:345` 단일 인스턴스 한정 명시). 상세: `audit/03` §1a.
+- **3-4 [결정 2026-08-15]**: digest 미고정을 **의도된 선택**으로 확정. 방어형
+  도구는 베이스 이미지 최신 보안 패치 수신이 digest 동결보다 이득이 크므로
+  minor 태그 고정을 유지한다. 상세: `audit/03` §4.
+- **3-5 [조치 완료 2026-08-15]**: `scope_guard._blocked_ip_reason`에서 loopback을
+  reserved 차단에서 제외해 IPv4(`127.0.0.1`)·IPv6(`::1`) loopback을 동일하게
+  처리(둘 다 allowlist 규칙 필요). reserved 나머지 대역은 계속 차단. 회귀
+  테스트 2건 추가(`test_scope_guard.py`). 상세: `audit/01` C-1.
 
 ### 검증되어 정상 작동하는 통제 (결함 아님, 기록)
 DNS 리바인딩 핀, 리다이렉트 매 홉 재검사, HTTPS→HTTP 다운그레이드 차단, 자격증명
