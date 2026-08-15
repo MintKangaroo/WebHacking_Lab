@@ -70,8 +70,15 @@
   회귀 테스트 추가, 전체 스위트 133 passed.
 - 상세: `audit/03` §3-2.
 
-### 3-3. [LOW] Rate 게이트 target_key 분할 / 3-4. [LOW] Docker digest 미고정 / 3-5. [LOW] IPv4·IPv6 loopback 처리 비일관
-- 각각 `audit/03` §1a, §4, `audit/01` C-1 참조. 모두 저위험.
+### 3-3. [LOW] Rate 게이트 target_key 분할 / 3-4. [LOW · 결정 완료] Docker digest 미고정 / 3-5. [LOW · 조치 완료] IPv4·IPv6 loopback 처리 비일관
+- 3-3: `audit/03` §1a 참조. 저위험, 미조치.
+- **3-4 [결정 2026-08-15]**: digest 미고정을 **의도된 선택**으로 확정. 방어형
+  도구는 베이스 이미지 최신 보안 패치 수신이 digest 동결보다 이득이 크므로
+  minor 태그 고정을 유지한다. 상세: `audit/03` §4.
+- **3-5 [조치 완료 2026-08-15]**: `scope_guard._blocked_ip_reason`에서 loopback을
+  reserved 차단에서 제외해 IPv4(`127.0.0.1`)·IPv6(`::1`) loopback을 동일하게
+  처리(둘 다 allowlist 규칙 필요). reserved 나머지 대역은 계속 차단. 회귀
+  테스트 2건 추가(`test_scope_guard.py`). 상세: `audit/01` C-1.
 
 ### 검증되어 정상 작동하는 통제 (결함 아님, 기록)
 DNS 리바인딩 핀, 리다이렉트 매 홉 재검사, HTTPS→HTTP 다운그레이드 차단, 자격증명

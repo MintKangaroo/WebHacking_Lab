@@ -97,7 +97,11 @@ def _blocked_ip_reason(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -
         return "Multicast addresses are blocked"
     if effective.is_link_local:
         return "Link-local addresses are blocked"
-    if effective.is_reserved:
+    # IPv6 loopback (``::1``) is also flagged ``is_reserved``, but IPv4 loopback
+    # (127.0.0.0/8) is not. The allowlist model intentionally permits loopback
+    # for local-lab targets, so exempt loopback here to treat both families
+    # consistently while still blocking the rest of the reserved space.
+    if effective.is_reserved and not effective.is_loopback:
         return "Reserved addresses are blocked"
     return None
 

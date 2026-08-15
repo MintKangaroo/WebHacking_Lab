@@ -83,6 +83,14 @@ CTF 무인 모드가 사람 확인을 제거하기 때문에 그 오해가 실�
 CTF 무인 프로빙 경고를 명시. 코드는 의도적으로 유지(공개·사설 CTF paste-and-go
 요구사항). C-1은 이제 문서-구현 정합.
 
+**[조치 완료 2026-08-15] loopback 비일관성(3-5) 통일.** `_blocked_ip_reason`의
+reserved 차단을 `is_reserved and not is_loopback`으로 좁혀, IPv6 loopback(`::1`,
+Python에서 `is_reserved=True`)을 IPv4 loopback(`127.0.0.1`, reserved 아님)과
+동일하게 통과시킴. 두 loopback 모두 이제 **allowlist 규칙 등록 시에만 허용**되어
+동작이 일치한다. reserved의 나머지 대역(예: `100::1`)은 계속 차단됨을 회귀
+테스트로 고정(`test_scope_guard.py`: loopback 통일 + reserved-비loopback 차단).
+사설/loopback을 allowlist로 허용하는 전체 설계 결정은 위 문서 정정과 동일하게 유지.
+
 ---
 
 ## C-2. [검증됨·정상] DNS 리바인딩 핀은 실제로 작동
