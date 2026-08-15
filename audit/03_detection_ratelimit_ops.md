@@ -66,9 +66,18 @@ bounded. 영향 낮음. `RateLimitError`로 fail-fast(큐잉 없음)라 은닉 �
 영향: 외부 실행은 body를 아예 전송하지 않고(`request_execution.py:96-97`), import된
 자격증명 헤더는 구조화 마스킹으로 처리되므로 실 위험은 낮다. 다만 사용자가 평문
 body/비민감 JSON 키에 시크릿을 붙여넣어 저장하면 `[REDACTED]` 없이 DB에 남을 수
-있다. README `:66`의 "token 계열 값은 저장 전 `[REDACTED]`" 문구는 **키 기반에
-한정**됨을 명확히 하는 편이 정확하다. 순수 하드 결함은 아님(문서 정밀도 + 경미한
-커버리지 갭).
+있었다.
+
+- **[조치 완료 2026-08-15]** 키 이름에 의존하지 않는 **값-형태 탐지**를 추가해
+  해소. `redaction.py`에 (a) JWT 패턴(`eyJ...` 3분절), (b) `Bearer`/`Basic`
+  자격증명, (c) 고엔트로피 토큰(길이 ≥32, 숫자+문자 혼합, Shannon ≥3.5) 탐지를
+  넣고 `redact_value_shapes()`로 묶었다. 이를 `redact_text`(평문 body),
+  `redact_mapping`의 **문자열 리프**(비민감 JSON 키 값), `redact_pairs`의 비민감
+  쿼리/헤더 값 경로 전부에 적용. 저엔트로피 산문·짧은 값·숫자 없는 소문자 런은
+  분석 가치를 위해 보존된다(회귀 테스트 3건 추가,
+  `tests/test_redaction_and_normalization.py`). 잔여 트레이드오프: 40자 hex
+  git SHA 등 고엔트로피 식별자는 보수적으로 마스킹될 수 있음(세션 토큰 오인
+  방지를 우선한 의도된 동작).
 
 ---
 

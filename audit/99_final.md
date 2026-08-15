@@ -61,10 +61,13 @@
   paste-and-go 유지가 사용자 요구사항이므로. 잔여 위험(내부 주소 붙여넣기 시
   무인 프로빙)은 이제 문서에 정직하게 경고됨.
 
-### 3-2. [LOW] 비구조화 텍스트/비민감 JSON 키의 시크릿은 마스킹되지 않음
-- `redact_text`의 키워드가 좁고(`redaction.py:35-38`), `redact_mapping`은 키
-  기준(`:93-105`). 평문 body/비민감 키의 토큰은 `[REDACTED]` 없이 저장 가능.
-- 실 위험 완화 요인: 외부 실행은 body 미전송, 헤더 자격증명은 구조화 마스킹.
+### 3-2. [LOW · 조치 완료 2026-08-15] 비구조화 텍스트/비민감 JSON 키의 시크릿 마스킹
+- 기존: `redact_text`의 키워드가 좁고(`redaction.py`), `redact_mapping`은 키
+  기준이라 평문 body/비민감 키의 토큰이 `[REDACTED]` 없이 저장 가능했다.
+- **조치**: 키 이름 비의존 **값-형태 탐지**(JWT·`Bearer`/`Basic`·고엔트로피
+  토큰)를 `redact_value_shapes()`로 추가하고 `redact_text`/`redact_mapping`
+  문자열 리프/`redact_pairs` 비민감 값 경로에 적용. 저엔트로피 산문은 보존.
+  회귀 테스트 추가, 전체 스위트 133 passed.
 - 상세: `audit/03` §3-2.
 
 ### 3-3. [LOW] Rate 게이트 target_key 분할 / 3-4. [LOW] Docker digest 미고정 / 3-5. [LOW] IPv4·IPv6 loopback 처리 비일관

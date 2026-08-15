@@ -1,6 +1,7 @@
 """Deterministic masking for HTTP data, logs, and persisted artifacts."""
 
 import json
+import math
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -36,6 +37,50 @@ ASSIGNMENT_PATTERN = re.compile(
     r"(?i)(password|passwd|api[_-]?key|access[_-]?token|refresh[_-]?token|secret)"
     r"(\s*[:=]\s*)([^&\s,;]+)"
 )
+
+# Value-shape detectors: catch secrets that carry no telling key name.
+# JWTs are unmistakable (base64url header starting with ``eyJ`` + two dotted
+# segments), so masking them has effectively no false-positive cost.
+JWT_PATTERN = re.compile(r"eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{0,}")
+# ``Bearer <token>`` / ``Basic <token>`` credentials embedded in free text.
+BEARER_PATTERN = re.compile(r"(?i)\b(bearer|basic)(\s+)([A-Za-z0-9._~+/=-]{8,})")
+# Candidate runs of secret-charset characters, screened by entropy below.
+HIGH_ENTROPY_CANDIDATE = re.compile(r"[A-Za-z0-9+/=_-]{32,}")
+_MIN_ENTROPY_TOKEN_LEN = 32
+_MIN_SHANNON_ENTROPY = 3.5
+
+
+def _shannon_entropy(value: str) -> float:
+    """Return the Shannon entropy (bits/char) of a string."""
+
+    if not value:
+        return 0.0
+    length = len(value)
+    counts: dict[str, int] = {}
+    for char in value:
+        counts[char] = counts.get(char, 0) + 1
+    return -sum(
+        (count / length) * math.log2(count / length) for count in counts.values()
+    )
+
+
+def _looks_like_secret(token: str) -> bool:
+    """Heuristic: a long, high-entropy, mixed run reads as a credential."""
+
+    if len(token) < _MIN_ENTROPY_TOKEN_LEN:
+        return False
+    # Require some variety so long lowercase identifiers/hashes-of-words don't
+    # trip the detector; genuine keys mix classes or include digits.
+    has_digit = any(char.isdigit() for char in token)
+    has_alpha = any(char.isalpha() for char in token)
+    if not (has_digit and has_alpha):
+        return False
+    return _shannon_entropy(token) >= _MIN_SHANNON_ENTROPY
+
+
+def _redact_high_entropy(match: re.Match[str]) -> str:
+    token = match.group(0)
+    return REDACTED if _looks_like_secret(token) else token
 
 
 def is_sensitive_name(name: str) -> bool:
@@ -86,7 +131,8 @@ def redact_pairs(
         elif mask_all or is_sensitive_name(name):
             result.append(NameValue(name=name, value=REDACTED, redacted=True))
         else:
-            result.append(NameValue(name=name, value=value, redacted=False))
+            masked = redact_value_shapes(value)
+            result.append(NameValue(name=name, value=masked, redacted=masked != value))
     return result
 
 
@@ -102,16 +148,30 @@ def redact_mapping(value: Any, key: str | None = None) -> Any:
         }
     if isinstance(value, list):
         return [redact_mapping(item) for item in value]
+    if isinstance(value, str):
+        return redact_text(value)
     return value
 
 
-def redact_text(value: str) -> str:
-    """Mask common key/value secrets in otherwise unstructured text."""
+def redact_value_shapes(value: str) -> str:
+    """Mask secrets identifiable by shape alone (no telling key name)."""
 
-    return ASSIGNMENT_PATTERN.sub(
+    value = JWT_PATTERN.sub(REDACTED, value)
+    value = BEARER_PATTERN.sub(
         lambda match: f"{match.group(1)}{match.group(2)}{REDACTED}",
         value,
     )
+    return HIGH_ENTROPY_CANDIDATE.sub(_redact_high_entropy, value)
+
+
+def redact_text(value: str) -> str:
+    """Mask key/value and value-shaped secrets in unstructured text."""
+
+    value = ASSIGNMENT_PATTERN.sub(
+        lambda match: f"{match.group(1)}{match.group(2)}{REDACTED}",
+        value,
+    )
+    return redact_value_shapes(value)
 
 
 def redact_body(body: str, content_type: str | None) -> str:

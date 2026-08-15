@@ -10,6 +10,8 @@ from webhacking_lab.core.redaction import (
     redact_cookie_string,
     redact_mapping,
     redact_pairs,
+    redact_text,
+    redact_value_shapes,
 )
 from webhacking_lab.domain.exceptions import ImportFormatError
 from webhacking_lab.http_client.request_normalizer import (
@@ -76,6 +78,50 @@ def test_redaction_helpers_handle_nested_and_form_data() -> None:
     )
     pairs = redact_pairs([("X-API-Key", "secret"), ("Accept", "application/json")])
     assert [item.redacted for item in pairs] == [True, False]
+
+
+_JWT = (
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+    ".eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4ifQ"
+    ".SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+)
+
+
+def test_value_shape_secrets_are_masked_without_key_hints() -> None:
+    # JWT under a benign JSON key (key-name masking would miss it).
+    masked = redact_body(json.dumps({"data": _JWT}), "application/json")
+    assert _JWT not in masked
+    assert REDACTED in json.loads(masked)["data"]
+
+    # Bearer credential embedded in free text keeps its scheme, drops the token.
+    assert redact_text("Authorization: Bearer abc123def456ghi789") == (
+        "Authorization: Bearer [REDACTED]"
+    )
+
+    # A long, high-entropy, mixed run reads as a credential.
+    high_entropy = "aB3xK9mQ2pL7wZ4vR8tN6yU1cE5dF0gH2jK4lM6n"
+    assert redact_value_shapes(f"key {high_entropy} tail") == "key [REDACTED] tail"
+
+
+def test_value_shape_detection_leaves_ordinary_values_intact() -> None:
+    # Short values and low-entropy prose must survive for analysis.
+    assert redact_value_shapes("the quick brown fox jumps over the lazy dog") == (
+        "the quick brown fox jumps over the lazy dog"
+    )
+    # A long all-lowercase run without digits is not treated as a secret.
+    plain = "thequickbrownfoxjumpsoverthelazydogandthen"
+    assert redact_value_shapes(plain) == plain
+    # Benign JSON scalars pass through untouched.
+    assert redact_mapping({"username": "student", "count": 42}) == {
+        "username": "student",
+        "count": 42,
+    }
+
+
+def test_query_value_shape_secret_is_masked_by_pairs() -> None:
+    pairs = redact_pairs([("redirect", f"https://x/#{_JWT}")])
+    assert _JWT not in pairs[0].value
+    assert pairs[0].redacted is True
 
 
 @pytest.mark.parametrize(
