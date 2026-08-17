@@ -17,6 +17,7 @@ from webhacking_lab.static_analysis.models import (
 )
 
 REQUEST_LOCATIONS = {
+    # Flask request attributes.
     "args": "query",
     "form": "form",
     "values": "request",
@@ -24,6 +25,17 @@ REQUEST_LOCATIONS = {
     "headers": "header",
     "cookies": "cookie",
     "files": "multipart",
+    # Starlette / FastAPI request attributes.
+    "query_params": "query",
+    "path_params": "path",
+}
+# Request accessors exposed as (often awaited) method calls.
+REQUEST_METHOD_SOURCES = {
+    "request.get_json": "json",
+    "request.json": "json",
+    "request.form": "form",
+    "request.body": "body",
+    "request.data": "body",
 }
 SANITIZERS = {
     "int": "integer conversion",
@@ -119,8 +131,8 @@ def _source_from_container(container: ast.AST, key: str | None, line: int) -> _T
     location = ""
     if isinstance(container, ast.Attribute) and _name(container.value) == "request":
         location = REQUEST_LOCATIONS.get(container.attr, "")
-    elif isinstance(container, ast.Call) and _name(container.func) == "request.get_json":
-        location = "json"
+    elif isinstance(container, ast.Call):
+        location = REQUEST_METHOD_SOURCES.get(_name(container.func), "")
     if not location:
         return None
     parameter = key or location
@@ -147,7 +159,7 @@ def _request_source(node: ast.AST) -> _Taint | None:
         if isinstance(node.func, ast.Attribute) and node.func.attr == "get":
             key = _string_key(node.args[0]) if node.args else None
             return _source_from_container(node.func.value, key, line)
-        if _name(node.func) == "request.get_json":
+        if _name(node.func) in REQUEST_METHOD_SOURCES:
             return _source_from_container(node, None, line)
     if isinstance(node, ast.Attribute) and _name(node.value) == "request":
         return _source_from_container(node, None, line)
@@ -178,6 +190,8 @@ def _trace(
     source = _request_source(node)
     if source is not None:
         return source
+    if isinstance(node, ast.Await):
+        return _trace(node.value, environment, context)
     if isinstance(node, ast.Name):
         return environment.get(node.id)
     if isinstance(node, ast.Attribute):
@@ -468,6 +482,76 @@ def _severity(category: VulnerabilityCategory) -> Severity:
     return Severity.MEDIUM
 
 
+FASTAPI_NON_INPUT_TYPES = {
+    "Request",
+    "WebSocket",
+    "Response",
+    "BackgroundTasks",
+    "Session",
+    "AsyncSession",
+}
+DEPENDENCY_MARKERS = {"Depends", "Security"}
+
+
+def _annotation_root(node: ast.expr | None) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Subscript):
+        return _annotation_root(node.value)
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return ""
+
+
+def _fastapi_parameter_sources(
+    function: ast.FunctionDef | ast.AsyncFunctionDef, route: ExtractedRoute
+) -> dict[str, _Taint]:
+    """Treat client-bound handler parameters (query/path/body/header) as sources.
+
+    FastAPI delivers request data as typed function parameters, so any parameter
+    that is not a framework object or an injected dependency is untrusted input.
+    """
+
+    args = function.args
+    positional = [*args.posonlyargs, *args.args]
+    defaults: dict[str, ast.expr] = {}
+    for argument, default in zip(
+        positional[len(positional) - len(args.defaults) :], args.defaults, strict=True
+    ):
+        defaults[argument.arg] = default
+    for argument, default in zip(args.kwonlyargs, args.kw_defaults, strict=True):
+        if default is not None:
+            defaults[argument.arg] = default
+
+    sources: dict[str, _Taint] = {}
+    for argument in (*positional, *args.kwonlyargs):
+        name = argument.arg
+        if name in {"self", "cls"}:
+            continue
+        if _annotation_root(argument.annotation) in FASTAPI_NON_INPUT_TYPES:
+            continue
+        default = defaults.get(name)
+        if isinstance(default, ast.Call) and (
+            _name(default.func).rsplit(".", 1)[-1] in DEPENDENCY_MARKERS
+        ):
+            continue
+        sources[name] = _Taint(
+            (
+                StaticFlowStep(
+                    id="step-0",
+                    kind="source",
+                    label=f"parameter {name}",
+                    line=route.line_start,
+                    detail="An untrusted request parameter enters the route handler.",
+                ),
+            ),
+            name,
+        )
+    return sources
+
+
 class _FunctionAnalyzer:
     def __init__(
         self,
@@ -511,6 +595,10 @@ class _FunctionAnalyzer:
             )
 
     def analyze(self, function: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        if self.depth == 0 and self.route.framework == "FastAPI":
+            for name, taint in _fastapi_parameter_sources(function, self.route).items():
+                # Path parameters seeded from route.parameters take precedence.
+                self.environment.setdefault(name, taint)
         self._statements(function.body)
 
     def _statements(self, statements: list[ast.stmt]) -> None:
