@@ -9,8 +9,16 @@ from webhacking_lab.static_analysis.languages.php.parser import (
     _outer_call_name,
     analyze_php_taint,
 )
-from webhacking_lab.static_analysis.languages.python.taint_rules import analyze_python_taint
-from webhacking_lab.static_analysis.models import AuthenticationInfo, ExtractedRoute, IndexedFile
+from webhacking_lab.static_analysis.languages.python.taint_rules import (
+    MAX_CALL_DEPTH,
+    analyze_python_taint,
+)
+from webhacking_lab.static_analysis.models import (
+    AuthenticationInfo,
+    ExtractedRoute,
+    IndexedFile,
+    StaticParameter,
+)
 from webhacking_lab.static_analysis.taint_engine import (
     MAX_TAINT_FILE_BYTES,
     analyze_static_data_flows,
@@ -129,6 +137,100 @@ def test_python_flow_steps_are_bounded() -> None:
     findings, _ = analyze_python_taint(source, "app.py", [_route("app.py")])
     assert len(findings[0].flow_steps) == 64
     assert "capped at 64 steps" in findings[0].limitations[-1]
+
+
+def test_python_tainted_argument_reaches_sink_in_local_helper() -> None:
+    source = """
+def handler():
+    q = request.args["q"]
+    run_query(q)
+
+
+def run_query(value):
+    cursor.execute("SELECT * FROM t WHERE x = " + value)
+"""
+    findings, _ = analyze_python_taint(source, "app.py", [_route("app.py")])
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding.category == VulnerabilityCategory.SQL_INJECTION
+    assert finding.parameter == "q"
+    assert finding.route_handler == "handler"
+    assert finding.sink_line == 8  # inside the helper, not the handler
+    assert any(step.label == "Argument to value" for step in finding.flow_steps)
+    assert "Traced across 1 local function call" in finding.limitations[-1]
+
+
+def test_python_path_parameter_flows_into_helper_sink() -> None:
+    source = """
+def handler(name):
+    render_it(name)
+
+
+def render_it(value):
+    return make_response(value)
+"""
+    route = _route("app.py")
+    route.parameters.append(StaticParameter(name="name", location="path"))
+    findings, _ = analyze_python_taint(source, "app.py", [route])
+    assert [f.category for f in findings] == [VulnerabilityCategory.XSS]
+    assert findings[0].sink_line == 7  # inside render_it, reached from the path param
+
+
+def test_python_strong_sanitizer_before_helper_call_is_safe() -> None:
+    source = """
+def handler():
+    q = int(request.args["q"])
+    run_query(q)
+
+
+def run_query(value):
+    cursor.execute("SELECT * FROM t WHERE x = " + str(value))
+"""
+    findings, safe = analyze_python_taint(source, "app.py", [_route("app.py")])
+    assert findings == []
+    assert len(safe) == 1
+
+
+def test_python_untainted_helper_argument_yields_no_finding() -> None:
+    source = """
+def handler():
+    run_query("constant")
+
+
+def run_query(value):
+    cursor.execute(value)
+"""
+    findings, _ = analyze_python_taint(source, "app.py", [_route("app.py")])
+    assert findings == []
+
+
+def test_python_cross_function_recursion_terminates_and_is_bounded() -> None:
+    # Mutual recursion must be cycle-guarded; a chain longer than the depth
+    # budget must stop rather than recurse without bound.
+    recursive = """
+def handler():
+    step_a(request.args["q"])
+
+
+def step_a(x):
+    step_b(x)
+
+
+def step_b(y):
+    step_a(y)
+    cursor.execute(y)
+"""
+    findings, _ = analyze_python_taint(recursive, "app.py", [_route("app.py")])
+    assert len(findings) == 1
+
+    levels = ["def handler():\n    level_0(request.args['q'])"]
+    for index in range(MAX_CALL_DEPTH + 3):
+        nxt = f"level_{index + 1}(x)" if index < MAX_CALL_DEPTH + 2 else "cursor.execute(x)"
+        levels.append(f"def level_{index}(x):\n    {nxt}")
+    deep_source = "\n\n\n".join(levels)
+    deep_findings, _ = analyze_python_taint(deep_source, "app.py", [_route("app.py")])
+    # The sink sits below the call-depth budget, so it is intentionally not reached.
+    assert deep_findings == []
 
 
 def test_php_superglobal_sql_and_include_flows() -> None:

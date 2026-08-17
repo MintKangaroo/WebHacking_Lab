@@ -53,6 +53,7 @@ CATEGORY_NAMES = {
     VulnerabilityCategory.PATH_TRAVERSAL: "Path Traversal",
 }
 MAX_FLOW_STEPS = 64
+MAX_CALL_DEPTH = 3
 
 
 @dataclass(frozen=True)
@@ -319,13 +320,34 @@ def _severity(category: VulnerabilityCategory) -> Severity:
     return Severity.MEDIUM
 
 
+FunctionDef = ast.FunctionDef | ast.AsyncFunctionDef
+
+
 class _FunctionAnalyzer:
-    def __init__(self, file_path: str, route: ExtractedRoute) -> None:
+    def __init__(
+        self,
+        file_path: str,
+        route: ExtractedRoute,
+        *,
+        functions: dict[str, FunctionDef] | None = None,
+        call_stack: frozenset[str] = frozenset(),
+        depth: int = 0,
+        visited: set[tuple[str, int]] | None = None,
+        seed_environment: dict[str, _Taint] | None = None,
+    ) -> None:
         self.file_path = file_path
         self.route = route
-        self.environment: dict[str, _Taint] = {}
+        self.functions = functions or {}
+        self.call_stack = call_stack
+        self.depth = depth
+        self.visited: set[tuple[str, int]] = visited if visited is not None else set()
+        self.environment: dict[str, _Taint] = dict(seed_environment or {})
         self.findings: list[ExtractedStaticFinding] = []
         self.safe_decisions: list[str] = []
+        if depth > 0:
+            # Callee parameters are seeded from the caller; path params belong
+            # to the entry handler only.
+            return
         for parameter in route.parameters:
             if parameter.location != "path":
                 continue
@@ -388,10 +410,74 @@ class _FunctionAnalyzer:
             return [name for item in node.elts for name in _FunctionAnalyzer._target_names(item)]
         return []
 
+    @staticmethod
+    def _positional_params(function: FunctionDef) -> list[str]:
+        args = function.args
+        return [argument.arg for argument in (*args.posonlyargs, *args.args)]
+
+    def _seed_for_call(self, function: FunctionDef, node: ast.Call) -> dict[str, _Taint]:
+        """Map tainted call arguments onto the callee's parameter names."""
+
+        positional = self._positional_params(function)
+        allowed = set(positional) | {argument.arg for argument in function.args.kwonlyargs}
+        seed: dict[str, _Taint] = {}
+        for index, argument in enumerate(node.args):
+            if index >= len(positional) or isinstance(argument, ast.Starred):
+                break
+            self._seed_parameter(seed, positional[index], argument, node.lineno)
+        for keyword in node.keywords:
+            if keyword.arg is None or keyword.arg not in allowed:
+                continue
+            self._seed_parameter(seed, keyword.arg, keyword.value, node.lineno)
+        return seed
+
+    def _seed_parameter(
+        self, seed: dict[str, _Taint], name: str, argument: ast.expr, line: int
+    ) -> None:
+        value = _trace(argument, self.environment)
+        if value is None:
+            return
+        seed[name] = value.append(
+            "transformation",
+            f"Argument to {name}",
+            line,
+            "A tainted argument crosses into the called function.",
+        )
+
+    def _maybe_descend(self, node: ast.Call) -> None:
+        """Follow a call into a local function, seeding its tainted parameters."""
+
+        if self.depth >= MAX_CALL_DEPTH:
+            return
+        callee_name = _name(node.func)
+        function = self.functions.get(callee_name)
+        if function is None or callee_name in self.call_stack:
+            return
+        key = (callee_name, node.lineno)
+        if key in self.visited:
+            return
+        seed = self._seed_for_call(function, node)
+        if not seed:
+            return
+        self.visited.add(key)
+        child = _FunctionAnalyzer(
+            self.file_path,
+            self.route,
+            functions=self.functions,
+            call_stack=self.call_stack | {callee_name},
+            depth=self.depth + 1,
+            visited=self.visited,
+            seed_environment=seed,
+        )
+        child.analyze(function)
+        self.findings.extend(child.findings)
+        self.safe_decisions.extend(child.safe_decisions)
+
     def _scan_calls(self, statement: ast.stmt) -> None:
         for node in ast.walk(statement):
             if not isinstance(node, ast.Call):
                 continue
+            self._maybe_descend(node)
             sink = _sink_details(node)
             if sink is None:
                 continue
@@ -418,9 +504,14 @@ class _FunctionAnalyzer:
                 "Tainted data reaches a security-sensitive operation.",
             )
             limitations = [
-                "Intra-procedural AST analysis does not prove runtime reachability.",
+                "Bounded static AST analysis does not prove runtime reachability.",
                 "Dynamic dispatch, imported helpers, and framework middleware require review.",
             ]
+            if self.depth > 0:
+                limitations.append(
+                    f"Traced across {self.depth} local function call(s); calls deeper than "
+                    f"{MAX_CALL_DEPTH} levels or through returned values are not followed."
+                )
             if flow.truncated:
                 limitations.append(f"The displayed flow is capped at {MAX_FLOW_STEPS} steps.")
             self.findings.append(
@@ -450,6 +541,28 @@ class _FunctionAnalyzer:
             )
 
 
+def _local_functions(tree: ast.Module) -> dict[str, FunctionDef]:
+    """Index module-level functions by name, dropping ambiguous duplicates.
+
+    Only top-level definitions are callable by a bare name from a handler;
+    restricting to them avoids mismatching class methods or closures that
+    happen to share a common name.
+    """
+
+    functions: dict[str, FunctionDef] = {}
+    ambiguous: set[str] = set()
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name in functions:
+            ambiguous.add(node.name)
+            continue
+        functions[node.name] = node
+    for name in ambiguous:
+        functions.pop(name, None)
+    return functions
+
+
 def analyze_python_taint(
     content: str,
     file_path: str,
@@ -459,6 +572,7 @@ def analyze_python_taint(
 
     tree = ast.parse(content, filename=file_path, mode="exec")
     by_handler = {route.handler_name: route for route in routes if route.file_path == file_path}
+    functions = _local_functions(tree)
     findings: list[ExtractedStaticFinding] = []
     safe_decisions: list[str] = []
     for node in ast.walk(tree):
@@ -467,7 +581,7 @@ def analyze_python_taint(
         route = by_handler.get(node.name)
         if route is None:
             continue
-        analyzer = _FunctionAnalyzer(file_path, route)
+        analyzer = _FunctionAnalyzer(file_path, route, functions=functions)
         analyzer.analyze(node)
         findings.extend(analyzer.findings)
         safe_decisions.extend(analyzer.safe_decisions)
