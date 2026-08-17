@@ -312,6 +312,73 @@ def loop():
     assert findings == []
 
 
+def _fastapi_route(handler: str = "handler") -> ExtractedRoute:
+    return ExtractedRoute(
+        file_path="app.py",
+        framework="FastAPI",
+        methods=["GET"],
+        path="/test",
+        handler_name=handler,
+        line_start=2,
+        line_end=20,
+        parameters=[],
+        authentication=AuthenticationInfo(),
+    )
+
+
+def test_fastapi_typed_parameter_is_a_taint_source() -> None:
+    source = """
+def handler(item_id: int):
+    cursor.execute(f"SELECT * FROM t WHERE id = {item_id}")
+"""
+    findings, _ = analyze_python_taint(source, "app.py", [_fastapi_route()])
+    assert len(findings) == 1
+    assert findings[0].category == VulnerabilityCategory.SQL_INJECTION
+    assert findings[0].parameter == "item_id"
+    assert findings[0].source_label == "parameter item_id"
+
+
+def test_fastapi_dependency_and_request_object_params_are_not_direct_sources() -> None:
+    source = """
+def handler(request: Request, db: Session = Depends(get_db), q: str = ""):
+    cursor.execute("SELECT " + q)
+    cursor.execute("SELECT " + str(db))
+    cursor.execute("SELECT " + str(request))
+"""
+    findings, _ = analyze_python_taint(source, "app.py", [_fastapi_route()])
+    # Only the plain query parameter q is client-controlled here.
+    assert {finding.parameter for finding in findings} == {"q"}
+
+
+def test_fastapi_request_object_query_params_and_awaited_json() -> None:
+    subscript = """
+def handler(request: Request):
+    value = request.query_params["q"]
+    cursor.execute("SELECT " + value)
+"""
+    findings, _ = analyze_python_taint(subscript, "app.py", [_fastapi_route()])
+    assert [f.category for f in findings] == [VulnerabilityCategory.SQL_INJECTION]
+
+    awaited = """
+async def handler(request: Request):
+    body = await request.json()
+    cursor.execute("SELECT " + body)
+"""
+    findings, _ = analyze_python_taint(awaited, "app.py", [_fastapi_route()])
+    assert [f.category for f in findings] == [VulnerabilityCategory.SQL_INJECTION]
+
+
+def test_flask_route_does_not_seed_handler_parameters() -> None:
+    # Non-path Flask parameters are not request-bound, so they must not be
+    # treated as sources (only explicit request.* access is).
+    source = """
+def handler(item_id):
+    cursor.execute(f"SELECT {item_id}")
+"""
+    findings, _ = analyze_python_taint(source, "app.py", [_route("app.py")])
+    assert findings == []
+
+
 def test_php_superglobal_sql_and_include_flows() -> None:
     source = """<?php
 $id = $_GET["id"];
