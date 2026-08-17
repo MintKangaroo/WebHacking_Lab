@@ -157,7 +157,7 @@ def run_query(value):
     assert finding.route_handler == "handler"
     assert finding.sink_line == 8  # inside the helper, not the handler
     assert any(step.label == "Argument to value" for step in finding.flow_steps)
-    assert "Traced across 1 local function call" in finding.limitations[-1]
+    assert "Traced through local function calls" in finding.limitations[-1]
 
 
 def test_python_path_parameter_flows_into_helper_sink() -> None:
@@ -231,6 +231,85 @@ def step_b(y):
     deep_findings, _ = analyze_python_taint(deep_source, "app.py", [_route("app.py")])
     # The sink sits below the call-depth budget, so it is intentionally not reached.
     assert deep_findings == []
+
+
+def test_python_helper_return_value_carries_taint_back_to_caller() -> None:
+    source = """
+def handler():
+    value = read_id()
+    cursor.execute("SELECT * FROM t WHERE id = " + value)
+
+
+def read_id():
+    return request.args["id"]
+"""
+    findings, _ = analyze_python_taint(source, "app.py", [_route("app.py")])
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding.category == VulnerabilityCategory.SQL_INJECTION
+    assert finding.parameter == "id"
+    assert finding.sink_line == 4  # sink is in the handler, taint came via return
+    assert any(step.label == "Return value from read_id()" for step in finding.flow_steps)
+
+
+def test_python_helper_return_from_local_variable_and_branch() -> None:
+    source = """
+def handler():
+    query = build()
+    cursor.execute(query)
+
+
+def build():
+    raw = request.args["q"]
+    if raw:
+        return "SELECT " + raw
+    return "SELECT 1"
+"""
+    findings, _ = analyze_python_taint(source, "app.py", [_route("app.py")])
+    assert [f.category for f in findings] == [VulnerabilityCategory.SQL_INJECTION]
+
+
+def test_python_sanitizing_helper_return_is_safe() -> None:
+    source = """
+def handler():
+    value = safe_id()
+    cursor.execute("SELECT * FROM t WHERE id = " + str(value))
+
+
+def safe_id():
+    return int(request.args["id"])
+"""
+    findings, safe = analyze_python_taint(source, "app.py", [_route("app.py")])
+    assert findings == []
+    assert len(safe) == 1
+
+
+def test_python_constant_returning_helper_yields_no_finding() -> None:
+    source = """
+def handler():
+    value = version()
+    cursor.execute(value)
+
+
+def version():
+    return "v1"
+"""
+    findings, _ = analyze_python_taint(source, "app.py", [_route("app.py")])
+    assert findings == []
+
+
+def test_python_return_value_recursion_terminates() -> None:
+    source = """
+def handler():
+    value = loop()
+    cursor.execute(value)
+
+
+def loop():
+    return loop()
+"""
+    findings, _ = analyze_python_taint(source, "app.py", [_route("app.py")])
+    assert findings == []
 
 
 def test_php_superglobal_sql_and_include_flows() -> None:

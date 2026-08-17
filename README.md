@@ -340,7 +340,7 @@ PLAYWRIGHT_BASE_URL=http://127.0.0.1:8080 npm run e2e
 현재 구현 범위는 Foundation, HTTP Workspace, 제한적 외부 Repeater, Diff, Passive Analysis, React Flow 기초, Phase 8 URL Scanner, Phase 9 승인형 SAFE Scanner, Phase 10 Source Upload Foundation과 Phase 11 Flask/PHP Source-to-Sink 분석입니다.
 
 - URL crawler는 PASSIVE, SAFE, 그리고 서버 플래그로 활성화하는 CTF 프로필을 지원합니다. LOCAL_LAB 프로필, 제한적 timing test와 extraction은 아직 비활성화되어 있습니다.
-- Phase 11 taint의 Python 분석은 라우트 핸들러에서 시작해 같은 모듈의 지역 함수 호출로 오염 인자를 최대 3단계까지 따라가, 헬퍼 함수 안에 숨은 sink도 탐지합니다(재귀·상호재귀는 순환 차단). 반환값을 통한 역방향 전파, 3단계 초과 호출, 다른 모듈에서 import한 헬퍼, 복잡한 alias, dynamic dispatch는 여전히 분석 한계로 표시합니다. PHP는 보수적인 statement 흐름에 한정됩니다.
+- Phase 11 taint의 Python 분석은 라우트 핸들러에서 시작해 같은 모듈의 지역 함수 호출을 최대 3단계까지 따라갑니다. 오염 인자가 헬퍼 함수 안의 sink로 흐르는 경우(정방향)와, 헬퍼가 오염 데이터를 반환해 호출자에서 sink에 도달하는 경우(역방향, 반환값 전파)를 모두 탐지하며 재귀·상호재귀는 순환 차단합니다. 3단계 초과 호출, 다른 모듈에서 import한 헬퍼, 복잡한 alias, dynamic dispatch는 여전히 분석 한계로 표시합니다. PHP는 보수적인 statement 흐름에 한정됩니다.
 - Express/FastAPI/Django/Laravel/Spring 심화 규칙과 런타임 증거를 연결하는 Hybrid verification은 후속 Phase 범위입니다.
 - CTF Workspace, Encoding Workbench, 5개 격리 Lab, Finding/Report는 후속 Phase입니다.
 - 저장된 인증정보는 의도적으로 실행에 재사용하지 않아 로그인 세션 크롤링은 지원하지 않습니다.

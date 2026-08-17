@@ -55,6 +55,17 @@ CATEGORY_NAMES = {
 MAX_FLOW_STEPS = 64
 MAX_CALL_DEPTH = 3
 
+FunctionDef = ast.FunctionDef | ast.AsyncFunctionDef
+
+
+@dataclass(frozen=True)
+class _TraceContext:
+    """Call-graph context enabling bounded inter-procedural taint tracing."""
+
+    functions: dict[str, FunctionDef]
+    depth: int = 0
+    call_stack: frozenset[str] = frozenset()
+
 
 @dataclass(frozen=True)
 class _Taint:
@@ -159,18 +170,24 @@ def _merge(values: list[_Taint | None]) -> _Taint | None:
     )
 
 
-def _trace(node: ast.AST, environment: dict[str, _Taint]) -> _Taint | None:
+def _trace(
+    node: ast.AST,
+    environment: dict[str, _Taint],
+    context: _TraceContext | None = None,
+) -> _Taint | None:
     source = _request_source(node)
     if source is not None:
         return source
     if isinstance(node, ast.Name):
         return environment.get(node.id)
     if isinstance(node, ast.Attribute):
-        return _trace(node.value, environment)
+        return _trace(node.value, environment, context)
     if isinstance(node, ast.Subscript):
-        return _trace(node.value, environment)
+        return _trace(node.value, environment, context)
     if isinstance(node, ast.BinOp):
-        value = _merge([_trace(node.left, environment), _trace(node.right, environment)])
+        value = _merge(
+            [_trace(node.left, environment, context), _trace(node.right, environment, context)]
+        )
         return (
             value.append(
                 "transformation",
@@ -184,7 +201,7 @@ def _trace(node: ast.AST, environment: dict[str, _Taint]) -> _Taint | None:
     if isinstance(node, ast.JoinedStr):
         value = _merge(
             [
-                _trace(item.value, environment)
+                _trace(item.value, environment, context)
                 for item in node.values
                 if isinstance(item, ast.FormattedValue)
             ]
@@ -200,15 +217,17 @@ def _trace(node: ast.AST, environment: dict[str, _Taint]) -> _Taint | None:
             else None
         )
     if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-        return _merge([_trace(item, environment) for item in node.elts])
+        return _merge([_trace(item, environment, context) for item in node.elts])
     if isinstance(node, ast.Dict):
-        return _merge([_trace(item, environment) for item in node.values])
+        return _merge([_trace(item, environment, context) for item in node.values])
     if isinstance(node, ast.Call):
         call_name = _name(node.func)
         receiver = (
-            _trace(node.func.value, environment) if isinstance(node.func, ast.Attribute) else None
+            _trace(node.func.value, environment, context)
+            if isinstance(node.func, ast.Attribute)
+            else None
         )
-        value = _merge([receiver, *(_trace(item, environment) for item in node.args)])
+        value = _merge([receiver, *(_trace(item, environment, context) for item in node.args)])
         sanitizer = SANITIZERS.get(call_name) or SANITIZERS.get(call_name.rsplit(".", 1)[-1])
         if value is not None and sanitizer:
             return value.append(
@@ -217,6 +236,9 @@ def _trace(node: ast.AST, environment: dict[str, _Taint]) -> _Taint | None:
                 node.lineno,
                 f"{call_name} changes or validates the tainted value.",
             )
+        returned = _returned_taint(call_name, node, environment, context)
+        if returned is not None:
+            return returned
         if value is not None:
             label = (
                 "String format"
@@ -230,6 +252,132 @@ def _trace(node: ast.AST, environment: dict[str, _Taint]) -> _Taint | None:
                 "Inter-procedural behavior is approximated; the callee is not executed.",
             )
     return None
+
+
+def _positional_params(function: FunctionDef) -> list[str]:
+    args = function.args
+    return [argument.arg for argument in (*args.posonlyargs, *args.args)]
+
+
+def _seed_parameters(
+    function: FunctionDef,
+    node: ast.Call,
+    environment: dict[str, _Taint],
+    context: _TraceContext | None,
+) -> dict[str, _Taint]:
+    """Map tainted call arguments onto the callee's parameter names."""
+
+    positional = _positional_params(function)
+    allowed = set(positional) | {argument.arg for argument in function.args.kwonlyargs}
+    seed: dict[str, _Taint] = {}
+
+    def bind(name: str, argument: ast.expr) -> None:
+        value = _trace(argument, environment, context)
+        if value is None:
+            return
+        seed[name] = value.append(
+            "transformation",
+            f"Argument to {name}",
+            node.lineno,
+            "A tainted argument crosses into the called function.",
+        )
+
+    for index, argument in enumerate(node.args):
+        if index >= len(positional) or isinstance(argument, ast.Starred):
+            break
+        bind(positional[index], argument)
+    for keyword in node.keywords:
+        if keyword.arg is None or keyword.arg not in allowed:
+            continue
+        bind(keyword.arg, keyword.value)
+    return seed
+
+
+def _target_names(node: ast.AST) -> list[str]:
+    if isinstance(node, ast.Name):
+        return [node.id]
+    if isinstance(node, (ast.Tuple, ast.List)):
+        return [name for item in node.elts for name in _target_names(item)]
+    return []
+
+
+def _bind_targets(
+    environment: dict[str, _Taint], targets: list[ast.expr], value: _Taint | None, line: int
+) -> None:
+    for target in targets:
+        for name in _target_names(target):
+            if value is None:
+                environment.pop(name, None)
+            else:
+                environment[name] = value.append(
+                    "transformation",
+                    f"Assign {name}",
+                    line,
+                    "The tainted value is stored in a local variable.",
+                )
+
+
+def _nested_bodies(statement: ast.stmt) -> list[list[ast.stmt]]:
+    if isinstance(statement, (ast.If, ast.For, ast.AsyncFor, ast.While)):
+        return [statement.body, statement.orelse]
+    if isinstance(statement, (ast.With, ast.AsyncWith)):
+        return [statement.body]
+    if isinstance(statement, ast.Try):
+        bodies = [statement.body, statement.orelse, statement.finalbody]
+        bodies.extend(handler.body for handler in statement.handlers)
+        return bodies
+    return []
+
+
+def _simulate_returns(
+    statements: list[ast.stmt], environment: dict[str, _Taint], context: _TraceContext
+) -> list[_Taint | None]:
+    """Build a local environment and collect the taint of every return value."""
+
+    returns: list[_Taint | None] = []
+    for statement in statements:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        if isinstance(statement, (ast.Assign, ast.AnnAssign)) and statement.value is not None:
+            value = _trace(statement.value, environment, context)
+            targets = (
+                statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+            )
+            _bind_targets(environment, targets, value, statement.lineno)
+        elif isinstance(statement, ast.Return) and statement.value is not None:
+            returns.append(_trace(statement.value, environment, context))
+        for body in _nested_bodies(statement):
+            returns.extend(_simulate_returns(body, environment, context))
+    return returns
+
+
+def _returned_taint(
+    call_name: str,
+    node: ast.Call,
+    environment: dict[str, _Taint],
+    context: _TraceContext | None,
+) -> _Taint | None:
+    """Resolve a local function call to the taint it returns, if any."""
+
+    if context is None or context.depth >= MAX_CALL_DEPTH:
+        return None
+    function = context.functions.get(call_name)
+    if function is None or call_name in context.call_stack:
+        return None
+    seed = _seed_parameters(function, node, environment, context)
+    child_context = _TraceContext(
+        context.functions, context.depth + 1, context.call_stack | {call_name}
+    )
+    returns = _simulate_returns(function.body, dict(seed), child_context)
+    merged = _merge(returns)
+    if merged is None:
+        return None
+    return merged.append(
+        "transformation",
+        f"Return value from {call_name}()",
+        node.lineno,
+        "A tainted value is returned from the called function.",
+    )
 
 
 def _remediation(category: VulnerabilityCategory) -> StaticRemediation:
@@ -320,9 +468,6 @@ def _severity(category: VulnerabilityCategory) -> Severity:
     return Severity.MEDIUM
 
 
-FunctionDef = ast.FunctionDef | ast.AsyncFunctionDef
-
-
 class _FunctionAnalyzer:
     def __init__(
         self,
@@ -344,6 +489,7 @@ class _FunctionAnalyzer:
         self.environment: dict[str, _Taint] = dict(seed_environment or {})
         self.findings: list[ExtractedStaticFinding] = []
         self.safe_decisions: list[str] = []
+        self.context = _TraceContext(self.functions, depth, call_stack)
         if depth > 0:
             # Callee parameters are seeded from the caller; path params belong
             # to the entry handler only.
@@ -372,77 +518,14 @@ class _FunctionAnalyzer:
             if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 continue
             self._scan_calls(statement)
-            if isinstance(statement, (ast.Assign, ast.AnnAssign)):
-                value_node = statement.value
-                if value_node is None:
-                    continue
-                value = _trace(value_node, self.environment)
+            if isinstance(statement, (ast.Assign, ast.AnnAssign)) and statement.value is not None:
+                value = _trace(statement.value, self.environment, self.context)
                 targets = (
                     statement.targets if isinstance(statement, ast.Assign) else [statement.target]
                 )
-                for target in targets:
-                    for name in self._target_names(target):
-                        if value is None:
-                            self.environment.pop(name, None)
-                        else:
-                            self.environment[name] = value.append(
-                                "transformation",
-                                f"Assign {name}",
-                                statement.lineno,
-                                "The tainted value is stored in a local variable.",
-                            )
-            nested: list[list[ast.stmt]] = []
-            if isinstance(statement, (ast.If, ast.For, ast.AsyncFor, ast.While)):
-                nested = [statement.body, statement.orelse]
-            elif isinstance(statement, (ast.With, ast.AsyncWith)):
-                nested = [statement.body]
-            elif isinstance(statement, ast.Try):
-                nested = [statement.body, statement.orelse, statement.finalbody]
-                nested.extend(handler.body for handler in statement.handlers)
-            for body in nested:
+                _bind_targets(self.environment, targets, value, statement.lineno)
+            for body in _nested_bodies(statement):
                 self._statements(body)
-
-    @staticmethod
-    def _target_names(node: ast.AST) -> list[str]:
-        if isinstance(node, ast.Name):
-            return [node.id]
-        if isinstance(node, (ast.Tuple, ast.List)):
-            return [name for item in node.elts for name in _FunctionAnalyzer._target_names(item)]
-        return []
-
-    @staticmethod
-    def _positional_params(function: FunctionDef) -> list[str]:
-        args = function.args
-        return [argument.arg for argument in (*args.posonlyargs, *args.args)]
-
-    def _seed_for_call(self, function: FunctionDef, node: ast.Call) -> dict[str, _Taint]:
-        """Map tainted call arguments onto the callee's parameter names."""
-
-        positional = self._positional_params(function)
-        allowed = set(positional) | {argument.arg for argument in function.args.kwonlyargs}
-        seed: dict[str, _Taint] = {}
-        for index, argument in enumerate(node.args):
-            if index >= len(positional) or isinstance(argument, ast.Starred):
-                break
-            self._seed_parameter(seed, positional[index], argument, node.lineno)
-        for keyword in node.keywords:
-            if keyword.arg is None or keyword.arg not in allowed:
-                continue
-            self._seed_parameter(seed, keyword.arg, keyword.value, node.lineno)
-        return seed
-
-    def _seed_parameter(
-        self, seed: dict[str, _Taint], name: str, argument: ast.expr, line: int
-    ) -> None:
-        value = _trace(argument, self.environment)
-        if value is None:
-            return
-        seed[name] = value.append(
-            "transformation",
-            f"Argument to {name}",
-            line,
-            "A tainted argument crosses into the called function.",
-        )
 
     def _maybe_descend(self, node: ast.Call) -> None:
         """Follow a call into a local function, seeding its tainted parameters."""
@@ -456,7 +539,7 @@ class _FunctionAnalyzer:
         key = (callee_name, node.lineno)
         if key in self.visited:
             return
-        seed = self._seed_for_call(function, node)
+        seed = _seed_parameters(function, node, self.environment, self.context)
         if not seed:
             return
         self.visited.add(key)
@@ -482,7 +565,7 @@ class _FunctionAnalyzer:
             if sink is None:
                 continue
             category, sink_name, argument = sink
-            value = _trace(argument, self.environment)
+            value = _trace(argument, self.environment, self.context)
             if value is None:
                 continue
             strong = STRONG_SANITIZERS.get(category, set())
@@ -507,10 +590,13 @@ class _FunctionAnalyzer:
                 "Bounded static AST analysis does not prove runtime reachability.",
                 "Dynamic dispatch, imported helpers, and framework middleware require review.",
             ]
-            if self.depth > 0:
+            crossed_boundary = self.depth > 0 or any(
+                step.label.startswith(("Argument to ", "Return value from ")) for step in flow.steps
+            )
+            if crossed_boundary:
                 limitations.append(
-                    f"Traced across {self.depth} local function call(s); calls deeper than "
-                    f"{MAX_CALL_DEPTH} levels or through returned values are not followed."
+                    f"Traced through local function calls up to {MAX_CALL_DEPTH} levels; "
+                    "deeper chains, cross-module helpers, and dynamic dispatch are not followed."
                 )
             if flow.truncated:
                 limitations.append(f"The displayed flow is capped at {MAX_FLOW_STEPS} steps.")
