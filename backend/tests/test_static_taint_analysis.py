@@ -379,6 +379,61 @@ def handler(item_id):
     assert findings == []
 
 
+def _django_route(handler: str = "handler", params: list[str] | None = None) -> ExtractedRoute:
+    return ExtractedRoute(
+        file_path="views.py",
+        framework="Django",
+        methods=["GET", "POST"],
+        path="/test/",
+        handler_name=handler,
+        line_start=2,
+        line_end=20,
+        parameters=[StaticParameter(name=name, location="path") for name in (params or [])],
+        authentication=AuthenticationInfo(),
+    )
+
+
+def test_django_url_parameter_reaches_sql_sink() -> None:
+    source = """
+def handler(request, item_id):
+    cursor.execute("SELECT * FROM items WHERE id = " + item_id)
+"""
+    findings, _ = analyze_python_taint(source, "views.py", [_django_route()])
+    assert len(findings) == 1
+    assert findings[0].category == VulnerabilityCategory.SQL_INJECTION
+    assert findings[0].parameter == "item_id"
+    assert findings[0].source_label == "URL parameter item_id"
+
+
+def test_django_request_get_and_post_are_sources() -> None:
+    get_source = """
+def handler(request):
+    term = request.GET["q"]
+    return HttpResponse("<h1>" + term + "</h1>")
+"""
+    findings, _ = analyze_python_taint(get_source, "views.py", [_django_route()])
+    assert [f.category for f in findings] == [VulnerabilityCategory.XSS]
+
+    post_source = """
+def handler(request):
+    name = request.POST.get("name")
+    cursor.execute("INSERT INTO t VALUES ('" + name + "')")
+"""
+    findings, _ = analyze_python_taint(post_source, "views.py", [_django_route()])
+    assert [f.category for f in findings] == [VulnerabilityCategory.SQL_INJECTION]
+
+
+def test_django_request_object_is_not_seeded_as_flat_source() -> None:
+    # The `request` object itself is not a flat tainted value; only its
+    # accessors are. Echoing request without an accessor is not a finding.
+    source = """
+def handler(request):
+    return HttpResponse(str(request))
+"""
+    findings, _ = analyze_python_taint(source, "views.py", [_django_route()])
+    assert findings == []
+
+
 def test_php_superglobal_sql_and_include_flows() -> None:
     source = """<?php
 $id = $_GET["id"];

@@ -3,6 +3,10 @@
 from pathlib import Path
 
 from webhacking_lab.static_analysis.languages.python.ast_parser import extract_python_routes
+from webhacking_lab.static_analysis.languages.python.django_parser import (
+    extract_django_routes,
+    extract_django_urlpatterns,
+)
 from webhacking_lab.static_analysis.models import (
     AuthenticationInfo,
     ExtractedRoute,
@@ -45,24 +49,35 @@ def extract_routes(
     routes: list[ExtractedRoute] = []
     warnings: list[str] = []
     framework_set = set(frameworks)
+    django = "Django" in framework_set
+    python_files = [
+        entry
+        for entry in files
+        if entry.language == "python" and entry.size_bytes <= MAX_AST_FILE_BYTES
+    ]
+    url_map: dict[str, tuple[str, list[str]]] = {}
+    if django:
+        # First pass: recover route paths from urls.py before matching views.
+        for entry in python_files:
+            content = (root / entry.relative_path).read_text(encoding="utf-8", errors="replace")
+            url_map.update(extract_django_urlpatterns(content, entry.relative_path))
     for entry in files:
         path = root / entry.relative_path
         if entry.language == "python":
             if entry.size_bytes > MAX_AST_FILE_BYTES:
                 warnings.append(f"Skipped oversized Python AST input: {entry.relative_path}")
                 continue
+            content = path.read_text(encoding="utf-8", errors="replace")
             try:
                 routes.extend(
-                    extract_python_routes(
-                        path.read_text(encoding="utf-8", errors="replace"),
-                        entry.relative_path,
-                        framework_set,
-                    )
+                    extract_python_routes(content, entry.relative_path, framework_set)
                 )
             except (SyntaxError, ValueError, TypeError) as error:
                 warnings.append(
                     f"Skipped malformed Python AST: {entry.relative_path} ({type(error).__name__})"
                 )
+            if django:
+                routes.extend(extract_django_routes(content, entry.relative_path, url_map))
         elif entry.language == "php":
             routes.append(_php_route(entry.relative_path))
     routes.sort(key=lambda item: (item.file_path, item.line_start, item.path))

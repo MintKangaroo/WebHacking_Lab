@@ -28,6 +28,13 @@ REQUEST_LOCATIONS = {
     # Starlette / FastAPI request attributes.
     "query_params": "query",
     "path_params": "path",
+    # Django request attributes.
+    "GET": "query",
+    "POST": "form",
+    "COOKIES": "cookie",
+    "META": "header",
+    "FILES": "multipart",
+    "body": "body",
 }
 # Request accessors exposed as (often awaited) method calls.
 REQUEST_METHOD_SOURCES = {
@@ -467,7 +474,7 @@ def _sink_details(call: ast.Call) -> tuple[VulnerabilityCategory, str, ast.AST] 
             return VulnerabilityCategory.COMMAND_INJECTION, call_name, call.args[0]
     if suffix in {"open", "read_text", "write_text", "send_file"} and call.args:
         return VulnerabilityCategory.PATH_TRAVERSAL, call_name, call.args[0]
-    if suffix in {"Response", "HTMLResponse", "make_response"} and call.args:
+    if suffix in {"Response", "HTMLResponse", "HttpResponse", "make_response"} and call.args:
         return VulnerabilityCategory.XSS, call_name, call.args[0]
     return None
 
@@ -552,6 +559,32 @@ def _fastapi_parameter_sources(
     return sources
 
 
+def _django_parameter_sources(
+    function: ast.FunctionDef | ast.AsyncFunctionDef, route: ExtractedRoute
+) -> dict[str, _Taint]:
+    """Treat a Django view's non-``request`` parameters as URL path sources."""
+
+    args = function.args
+    sources: dict[str, _Taint] = {}
+    for argument in (*args.posonlyargs, *args.args, *args.kwonlyargs):
+        name = argument.arg
+        if name in {"self", "cls", "request"}:
+            continue
+        sources[name] = _Taint(
+            (
+                StaticFlowStep(
+                    id="step-0",
+                    kind="source",
+                    label=f"URL parameter {name}",
+                    line=route.line_start,
+                    detail="An untrusted URL path parameter enters the Django view.",
+                ),
+            ),
+            name,
+        )
+    return sources
+
+
 class _FunctionAnalyzer:
     def __init__(
         self,
@@ -595,8 +628,14 @@ class _FunctionAnalyzer:
             )
 
     def analyze(self, function: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-        if self.depth == 0 and self.route.framework == "FastAPI":
-            for name, taint in _fastapi_parameter_sources(function, self.route).items():
+        if self.depth == 0:
+            if self.route.framework == "FastAPI":
+                seeds = _fastapi_parameter_sources(function, self.route)
+            elif self.route.framework == "Django":
+                seeds = _django_parameter_sources(function, self.route)
+            else:
+                seeds = {}
+            for name, taint in seeds.items():
                 # Path parameters seeded from route.parameters take precedence.
                 self.environment.setdefault(name, taint)
         self._statements(function.body)

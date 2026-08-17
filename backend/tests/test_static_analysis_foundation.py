@@ -246,6 +246,52 @@ def test_route_extractor_records_malformed_python_and_non_index_php(tmp_path: Pa
     assert "oversized Python AST" in oversized.warnings[0]
 
 
+def test_route_extractor_matches_django_views_to_urlpatterns(tmp_path: Path) -> None:
+    (tmp_path / "urls.py").write_text(
+        "from django.urls import path\n"
+        "from . import views\n"
+        "urlpatterns = [\n"
+        "    path('items/<int:item_id>/', views.item_detail),\n"
+        "]\n"
+    )
+    (tmp_path / "views.py").write_text(
+        "def item_detail(request, item_id):\n"
+        "    return item_id\n\n"
+        "def _helper(value):\n"  # first parameter is not `request`
+        "    return value\n"
+    )
+    entries, _ = index_source_tree(
+        tmp_path,
+        UploadPolicy(
+            max_archive_bytes=2_000,
+            max_extracted_bytes=2_000,
+            max_files=5,
+            max_single_file_bytes=1_000,
+        ),
+    )
+    routes = extract_routes(tmp_path, entries, ["Django"]).routes
+    django_routes = [route for route in routes if route.framework == "Django"]
+    assert [route.handler_name for route in django_routes] == ["item_detail"]
+    detail = django_routes[0]
+    assert detail.path == "/items/<int:item_id>/"
+    assert [parameter.name for parameter in detail.parameters] == ["item_id"]
+
+
+def test_route_extractor_skips_django_views_when_framework_absent(tmp_path: Path) -> None:
+    (tmp_path / "views.py").write_text("def index(request):\n    return request\n")
+    entries, _ = index_source_tree(
+        tmp_path,
+        UploadPolicy(
+            max_archive_bytes=1_000,
+            max_extracted_bytes=1_000,
+            max_files=5,
+            max_single_file_bytes=500,
+        ),
+    )
+    routes = extract_routes(tmp_path, entries, ["Flask"]).routes
+    assert all(route.framework != "Django" for route in routes)
+
+
 def test_project_detector_reports_malformed_manifests_and_plain_php(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[broken")
     (tmp_path / "package.json").write_text("{")
