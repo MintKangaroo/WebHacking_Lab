@@ -27,6 +27,23 @@ export async function apiGet<T>(
   return (await response.json()) as T;
 }
 
+export async function apiGetText(
+  path: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "GET",
+    headers: { Accept: "text/plain, text/markdown" },
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new ApiError(`API request failed with status ${response.status}`, response.status);
+  }
+
+  return await response.text();
+}
+
 type JsonMethod = "POST" | "PATCH" | "DELETE";
 
 export async function apiJson<TResponse, TBody = unknown>(

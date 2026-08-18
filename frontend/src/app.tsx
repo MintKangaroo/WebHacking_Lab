@@ -15,6 +15,7 @@ import { CodeAnalysisPage } from "./pages/code-analysis-page";
 import { ProjectPage } from "./pages/project-page";
 import { ProjectsPage } from "./pages/projects-page";
 import { RepeaterPage } from "./pages/repeater-page";
+import { ReportsPage } from "./pages/reports-page";
 import { ScansPage } from "./pages/scans-page";
 
 type ErrorBoundaryProps = {
@@ -97,6 +98,7 @@ export function App() {
                     <Route path="analyzer" element={<RepeaterPage />} />
                     <Route path="scans" element={<ScansPage />} />
                     <Route path="code-analysis" element={<CodeAnalysisPage />} />
+                    <Route path="reports" element={<ReportsPage />} />
                     <Route path="*" element={<Navigate to="/" replace />} />
                   </Route>
                 </Routes>
