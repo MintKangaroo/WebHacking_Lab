@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from webhacking_lab.api.schemas.reports import (
     ProjectReport,
     ReportFinding,
+    ReportFindingDetail,
+    ReportFlowStep,
     ReportSummary,
 )
 from webhacking_lab.database.models import (
@@ -64,6 +66,98 @@ class ReportService:
             generated_at=datetime.now(UTC),
             summary=_summarize(findings),
             findings=findings,
+        )
+
+    async def finding_detail(
+        self, project_id: UUID, source: str, origin_id: UUID
+    ) -> ReportFindingDetail:
+        if source == "static":
+            detail = await self._static_detail(project_id, origin_id)
+        elif source == "scanner":
+            detail = await self._scanner_detail(project_id, origin_id)
+        else:
+            raise EntityNotFoundError("Unknown finding source")
+        if detail is None:
+            raise EntityNotFoundError("Finding was not found for this project")
+        return detail
+
+    async def _static_detail(
+        self, project_id: UUID, origin_id: UUID
+    ) -> ReportFindingDetail | None:
+        row = (
+            await self._session.execute(
+                select(StaticFindingRecord, CodeFile.relative_path)
+                .join(CodeProject, StaticFindingRecord.code_project_id == CodeProject.id)
+                .join(CodeFile, StaticFindingRecord.code_file_id == CodeFile.id)
+                .where(
+                    CodeProject.project_id == project_id,
+                    StaticFindingRecord.id == origin_id,
+                )
+            )
+        ).first()
+        if row is None:
+            return None
+        record, path = row
+        remediation = record.remediation_json or {}
+        guidance = [
+            line
+            for line in (remediation.get("summary"), *remediation.get("guidance", []))
+            if line
+        ]
+        if remediation.get("verification"):
+            guidance.append(f"Verify: {remediation['verification']}")
+        return ReportFindingDetail(
+            source="static",
+            origin_id=record.id,
+            category=record.category,
+            title=record.title,
+            severity=record.severity,
+            status=record.status,
+            confidence=record.confidence,
+            location=f"{path}:{record.sink_line}",
+            summary=f"{record.source_label} → {record.sink_label}",
+            flow_steps=[
+                ReportFlowStep(
+                    kind=step.get("kind", ""),
+                    label=step.get("label", ""),
+                    line=step.get("line", 0),
+                    detail=step.get("detail", ""),
+                )
+                for step in record.flow_steps_json
+            ],
+            evidence=list(record.evidence_json),
+            remediation=guidance,
+            safe_example=remediation.get("safe_example"),
+            limitations=list(record.limitations_json),
+        )
+
+    async def _scanner_detail(
+        self, project_id: UUID, origin_id: UUID
+    ) -> ReportFindingDetail | None:
+        record = (
+            await self._session.scalars(
+                select(ScanFinding)
+                .join(ScanJob, ScanFinding.scan_id == ScanJob.id)
+                .where(ScanJob.project_id == project_id, ScanFinding.id == origin_id)
+            )
+        ).first()
+        if record is None:
+            return None
+        return ReportFindingDetail(
+            source="scanner",
+            origin_id=record.id,
+            category=record.category,
+            title=record.title,
+            severity=record.severity,
+            status=record.status,
+            confidence=record.confidence,
+            location=record.endpoint_url,
+            summary=record.summary,
+            flow_steps=[],
+            evidence=[_flatten_evidence(item) for item in record.evidence_json],
+            remediation=list(record.remediation_json),
+            safe_example=None,
+            limitations=list(record.limitations_json),
         )
 
     async def _static_findings(self, project_id: UUID) -> list[ReportFinding]:
@@ -167,3 +261,7 @@ def _finding_row(finding: ReportFinding) -> str:
 
 def _escape_cell(value: str) -> str:
     return value.replace("|", "\\|").replace("\n", " ")
+
+
+def _flatten_evidence(item: dict[str, object]) -> str:
+    return ", ".join(f"{key}: {value}" for key, value in item.items())

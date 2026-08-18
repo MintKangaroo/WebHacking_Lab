@@ -1,14 +1,22 @@
 import { useQuery } from "@tanstack/react-query";
-import { ClipboardCopy, FileText, ShieldAlert } from "lucide-react";
+import { ClipboardCopy, FileText, ShieldAlert, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { getProjects } from "../api/projects";
-import { getProjectReport, getProjectReportMarkdown } from "../api/reports";
+import {
+  getProjectReport,
+  getProjectReportMarkdown,
+  getReportFindingDetail,
+} from "../api/reports";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import type { ReportFinding } from "../types/resources";
+import type {
+  ReportFinding,
+  ReportFindingDetail,
+  ReportSource,
+} from "../types/resources";
 
 const fieldClass =
   "h-10 w-full rounded-md border border-line bg-black/20 px-3 text-sm text-slate-100 outline-none focus:border-cyan-400/50 sm:w-72";
@@ -30,8 +38,11 @@ function orderedSeverities(counts: Record<string, number>) {
   return [...known, ...extra];
 }
 
+type Selection = { source: ReportSource; originId: string };
+
 export function ReportsPage() {
   const [selected, setSelected] = useState<string>("");
+  const [finding, setFinding] = useState<Selection | null>(null);
   const projects = useQuery({
     queryKey: ["projects"],
     queryFn: ({ signal }) => getProjects(signal),
@@ -45,6 +56,18 @@ export function ReportsPage() {
     queryFn: ({ signal }) => getProjectReport(projectId, signal),
     enabled: Boolean(projectId),
   });
+
+  const detail = useQuery({
+    queryKey: ["report-finding", projectId, finding?.source, finding?.originId],
+    queryFn: ({ signal }) =>
+      getReportFindingDetail(projectId, finding!.source, finding!.originId, signal),
+    enabled: Boolean(projectId && finding),
+  });
+
+  const changeProject = (value: string) => {
+    setSelected(value);
+    setFinding(null);
+  };
 
   const copyMarkdown = async () => {
     try {
@@ -77,7 +100,7 @@ export function ReportsPage() {
             aria-label="Select project"
             className={fieldClass}
             value={projectId}
-            onChange={(event) => setSelected(event.target.value)}
+            onChange={(event) => changeProject(event.target.value)}
           >
             {(projects.data ?? []).map((project) => (
               <option key={project.id} value={project.id}>
@@ -131,36 +154,77 @@ export function ReportsPage() {
         </div>
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-sm text-slate-200">
-            <ShieldAlert className="size-4 text-amber-300" /> Findings
-            {summary ? (
-              <Badge tone="neutral">{summary.total}</Badge>
-            ) : null}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {report.isLoading ? (
-            <p className="py-8 text-center text-sm text-slate-500">Loading report…</p>
-          ) : report.isError ? (
-            <p className="py-8 text-center text-sm text-red-400">
-              The report could not be loaded.
-            </p>
-          ) : report.data && report.data.findings.length > 0 ? (
-            <FindingsTable findings={report.data.findings} />
-          ) : (
-            <p className="py-8 text-center text-sm text-slate-500">
-              No static or scanner findings were recorded for this project.
-            </p>
-          )}
-        </CardContent>
-      </Card>
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Card className={finding ? "lg:col-span-2" : "lg:col-span-3"}>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm text-slate-200">
+              <ShieldAlert className="size-4 text-amber-300" /> Findings
+              {summary ? <Badge tone="neutral">{summary.total}</Badge> : null}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {report.isLoading ? (
+              <p className="py-8 text-center text-sm text-slate-500">Loading report…</p>
+            ) : report.isError ? (
+              <p className="py-8 text-center text-sm text-red-400">
+                The report could not be loaded.
+              </p>
+            ) : report.data && report.data.findings.length > 0 ? (
+              <FindingsTable
+                findings={report.data.findings}
+                selectedId={finding?.originId ?? null}
+                onSelect={(row) => setFinding({ source: row.source, originId: row.origin_id })}
+              />
+            ) : (
+              <p className="py-8 text-center text-sm text-slate-500">
+                No static or scanner findings were recorded for this project.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
+        {finding ? (
+          <Card className="lg:col-span-1">
+            <CardHeader className="flex flex-row items-start justify-between gap-2">
+              <CardTitle className="text-sm text-slate-200">Finding detail</CardTitle>
+              <button
+                type="button"
+                aria-label="Close finding detail"
+                className="text-slate-500 hover:text-slate-200"
+                onClick={() => setFinding(null)}
+              >
+                <X className="size-4" />
+              </button>
+            </CardHeader>
+            <CardContent>
+              {detail.isLoading ? (
+                <p className="py-6 text-center text-sm text-slate-500">Loading detail…</p>
+              ) : detail.isError ? (
+                <p className="py-6 text-center text-sm text-red-400">
+                  The finding detail could not be loaded.
+                </p>
+              ) : detail.data ? (
+                <FindingDetail
+                  data={detail.data}
+                />
+              ) : null}
+            </CardContent>
+          </Card>
+        ) : null}
+      </div>
     </div>
   );
 }
 
-function FindingsTable({ findings }: { findings: ReportFinding[] }) {
+function FindingsTable({
+  findings,
+  selectedId,
+  onSelect,
+}: {
+  findings: ReportFinding[];
+  selectedId: string | null;
+  onSelect: (finding: ReportFinding) => void;
+}) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full border-collapse text-left text-sm">
@@ -176,7 +240,13 @@ function FindingsTable({ findings }: { findings: ReportFinding[] }) {
         </thead>
         <tbody>
           {findings.map((finding) => (
-            <tr key={`${finding.source}:${finding.origin_id}`} className="border-b border-line/50">
+            <tr
+              key={`${finding.source}:${finding.origin_id}`}
+              className={`cursor-pointer border-b border-line/50 transition-colors hover:bg-white/[0.03] ${
+                finding.origin_id === selectedId ? "bg-cyan-500/5" : ""
+              }`}
+              onClick={() => onSelect(finding)}
+            >
               <td className="px-3 py-2">
                 <Badge tone={severityTone(finding.severity)}>{finding.severity}</Badge>
               </td>
@@ -193,6 +263,70 @@ function FindingsTable({ findings }: { findings: ReportFinding[] }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function Section({ title, items }: { title: string; items: string[] }) {
+  if (items.length === 0) return null;
+  return (
+    <div>
+      <p className="text-[11px] uppercase tracking-widest text-slate-500">{title}</p>
+      <ul className="mt-1 space-y-1 text-sm text-slate-300">
+        {items.map((item, index) => (
+          <li key={`${title}-${index}`} className="flex gap-2">
+            <span className="text-slate-600">•</span>
+            <span>{item}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function FindingDetail({ data }: { data: ReportFindingDetail }) {
+  return (
+    <div className="space-y-4">
+      <div>
+        <div className="flex items-center gap-2">
+          <Badge tone={severityTone(data.severity)}>{data.severity}</Badge>
+          <Badge tone={data.source === "scanner" ? "accent" : "neutral"}>{data.source}</Badge>
+        </div>
+        <h3 className="mt-2 text-sm font-semibold text-slate-100">{data.title}</h3>
+        <p className="mt-1 font-mono text-xs text-slate-400">{data.location}</p>
+        <p className="mt-2 text-sm text-slate-300">{data.summary}</p>
+      </div>
+
+      {data.flow_steps.length > 0 ? (
+        <div>
+          <p className="text-[11px] uppercase tracking-widest text-slate-500">Data flow</p>
+          <ol className="mt-1 space-y-1 text-sm">
+            {data.flow_steps.map((step, index) => (
+              <li key={`flow-${index}`} className="flex gap-2">
+                <Badge tone={step.kind === "sink" ? "critical" : "neutral"}>{step.kind}</Badge>
+                <span className="text-slate-300">
+                  {step.label}
+                  <span className="text-slate-600"> · line {step.line}</span>
+                </span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      ) : null}
+
+      <Section title="Evidence" items={data.evidence} />
+      <Section title="Remediation" items={data.remediation} />
+
+      {data.safe_example ? (
+        <div>
+          <p className="text-[11px] uppercase tracking-widest text-slate-500">Safe example</p>
+          <pre className="mt-1 overflow-x-auto rounded-md border border-line bg-black/30 p-3 font-mono text-xs text-slate-300">
+            {data.safe_example}
+          </pre>
+        </div>
+      ) : null}
+
+      <Section title="Limitations" items={data.limitations} />
     </div>
   );
 }

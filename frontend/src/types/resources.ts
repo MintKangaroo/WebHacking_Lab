@@ -558,3 +558,27 @@ export type ProjectReport = {
   summary: ReportSummary;
   findings: ReportFinding[];
 };
+
+export type ReportFlowStep = {
+  kind: string;
+  label: string;
+  line: number;
+  detail: string;
+};
+
+export type ReportFindingDetail = {
+  source: ReportSource;
+  origin_id: string;
+  category: string;
+  title: string;
+  severity: string;
+  status: string;
+  confidence: number;
+  location: string;
+  summary: string;
+  flow_steps: ReportFlowStep[];
+  evidence: string[];
+  remediation: string[];
+  safe_example: string | null;
+  limitations: string[];
+};
