@@ -41,3 +41,31 @@ class ProjectReport(ApiModel):
     generated_at: datetime
     summary: ReportSummary
     findings: list[ReportFinding]
+
+
+class ReportFlowStep(ApiModel):
+    """One explainable step of a static source-to-sink trace."""
+
+    kind: str
+    label: str
+    line: int
+    detail: str
+
+
+class ReportFindingDetail(ApiModel):
+    """A single finding with its full evidence and remediation for drill-down."""
+
+    source: ReportSource
+    origin_id: UUID
+    category: str
+    title: str
+    severity: str
+    status: str
+    confidence: float
+    location: str
+    summary: str
+    flow_steps: list[ReportFlowStep]
+    evidence: list[str]
+    remediation: list[str]
+    safe_example: str | None
+    limitations: list[str]

@@ -101,7 +101,21 @@ async def test_report_bundles_static_and_scanner_findings_sorted_by_severity() -
             await session.commit()
             project_id = project.id
 
-            report = await ReportService(session).build(project_id)
+            service = ReportService(session)
+            report = await service.build(project_id)
+            scanner_id = report.findings[0].origin_id
+            static_id = report.findings[1].origin_id
+            scanner_detail = await service.finding_detail(project_id, "scanner", scanner_id)
+            static_detail = await service.finding_detail(project_id, "static", static_id)
+            with pytest.raises(EntityNotFoundError):
+                await service.finding_detail(project_id, "scanner", static_id)
+            with pytest.raises(EntityNotFoundError):
+                await service.finding_detail(project_id, "unknown", static_id)
+
+        assert scanner_detail.summary == "No Strict-Transport-Security header."
+        assert scanner_detail.flow_steps == []
+        assert static_detail.location == "app.py:5"
+        assert static_detail.summary == "request.args['id'] → cursor.execute"
 
         assert report.project_name == "Target App"
         assert report.summary.total == 2  # not-tested scanner finding excluded
@@ -184,6 +198,20 @@ def test_project_report_endpoints_expose_static_findings(client: TestClient) -> 
     assert markdown.status_code == 200
     assert markdown.headers["content-type"].startswith("text/markdown")
     assert "Security Findings Report" in markdown.text
+
+    static_finding = next(f for f in payload["findings"] if f["source"] == "static")
+    detail = client.get(
+        f"/api/projects/{project_id}/report/findings/static/{static_finding['origin_id']}"
+    )
+    assert detail.status_code == 200
+    detail_payload = detail.json()
+    assert detail_payload["source"] == "static"
+    assert len(detail_payload["flow_steps"]) >= 1
+    assert detail_payload["remediation"]
+    missing = client.get(
+        f"/api/projects/{project_id}/report/findings/static/{uuid4()}"
+    )
+    assert missing.status_code == 404
 
 
 def test_project_report_is_empty_for_project_without_findings(client: TestClient) -> None:

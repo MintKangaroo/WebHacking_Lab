@@ -1,8 +1,13 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "../src/app";
-import type { ProjectReport, ProjectSummary } from "../src/types/resources";
+import type {
+  ProjectReport,
+  ProjectSummary,
+  ReportFindingDetail,
+} from "../src/types/resources";
 
 const projectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
@@ -73,6 +78,26 @@ afterEach(() => {
   window.history.pushState({}, "", "/");
 });
 
+const staticDetail: ReportFindingDetail = {
+  source: "static",
+  origin_id: "22222222-2222-4222-8222-222222222222",
+  category: "sql_injection",
+  title: "Potential SQL Injection",
+  severity: "high",
+  status: "static_candidate",
+  confidence: 0.9,
+  location: "app.py:5",
+  summary: "request.args['id'] → cursor.execute",
+  flow_steps: [
+    { kind: "source", label: "request.args['id']", line: 3, detail: "Untrusted input." },
+    { kind: "sink", label: "cursor.execute", line: 5, detail: "Reaches SQL." },
+  ],
+  evidence: ["Source observed at line 3."],
+  remediation: ["Use parameter binding."],
+  safe_example: "cursor.execute('... = ?', (item_id,))",
+  limitations: ["Static analysis does not prove runtime reachability."],
+};
+
 describe("Findings report page", () => {
   it("bundles static and scanner findings for the selected project", async () => {
     window.history.pushState({}, "", "/reports");
@@ -95,6 +120,30 @@ describe("Findings report page", () => {
         expect.anything(),
       );
     });
+  });
+
+  it("drills into a finding to show its flow and remediation", async () => {
+    window.history.pushState({}, "", "/reports");
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = pathOf(input);
+      if (path === "/api/projects") return Promise.resolve(response([project]));
+      if (path === `/api/projects/${projectId}/report`) return Promise.resolve(response(report));
+      if (
+        path ===
+        `/api/projects/${projectId}/report/findings/static/${staticDetail.origin_id}`
+      ) {
+        return Promise.resolve(response(staticDetail));
+      }
+      return Promise.resolve(response({ message: "not found" }, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    await userEvent.click(await screen.findByText("Potential SQL Injection"));
+
+    expect(await screen.findByText("Data flow")).toBeInTheDocument();
+    expect(screen.getByText("Use parameter binding.")).toBeInTheDocument();
+    expect(screen.getByText(/cursor.execute\('... = \?'/)).toBeInTheDocument();
   });
 
   it("shows an empty state when a project has no findings", async () => {

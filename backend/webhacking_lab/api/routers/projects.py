@@ -12,7 +12,7 @@ from webhacking_lab.api.dependencies import (
     get_dns_resolver,
     get_request_settings,
 )
-from webhacking_lab.api.schemas.reports import ProjectReport
+from webhacking_lab.api.schemas.reports import ProjectReport, ReportFindingDetail
 from webhacking_lab.api.schemas.resources import (
     ProjectCreate,
     ProjectDetail,
@@ -83,6 +83,17 @@ async def get_project_report(project_id: UUID, session: Session) -> ProjectRepor
 async def get_project_report_markdown(project_id: UUID, session: Session) -> PlainTextResponse:
     report = await ReportService(session).build(project_id)
     return PlainTextResponse(render_report_markdown(report), media_type="text/markdown")
+
+
+@router.get(
+    "/projects/{project_id}/report/findings/{source}/{origin_id}",
+    response_model=ReportFindingDetail,
+    summary="Full evidence and remediation for one report finding",
+)
+async def get_report_finding_detail(
+    project_id: UUID, source: str, origin_id: UUID, session: Session
+) -> ReportFindingDetail:
+    return await ReportService(session).finding_detail(project_id, source, origin_id)
 
 
 @router.patch("/projects/{project_id}", response_model=ProjectDetail, summary="Update a project")
