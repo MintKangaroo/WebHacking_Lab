@@ -617,6 +617,58 @@ def test_php_outer_sanitizer_requires_one_complete_call(
     assert _outer_call_name(expression) == expected
 
 
+def test_php_open_redirect_via_location_header() -> None:
+    vulnerable = """<?php
+$next = $_GET["next"];
+header("Location: " . $next);
+"""
+    findings, _ = analyze_php_taint(vulnerable, "index.php", [_route("index.php")])
+    assert [f.category for f in findings] == [VulnerabilityCategory.OPEN_REDIRECT]
+
+    safe = """<?php
+$type = $_GET["type"];
+header("Content-Type: " . $type);
+"""
+    # A non-Location header is not an open-redirect sink.
+    assert analyze_php_taint(safe, "index.php", [_route("index.php")])[0] == []
+
+
+@pytest.mark.parametrize(
+    ("sink", "expected"),
+    [
+        ('popen("ping " . $v, "r")', VulnerabilityCategory.COMMAND_INJECTION),
+        ("eval($v)", VulnerabilityCategory.COMMAND_INJECTION),
+        ('fopen($v, "r")', VulnerabilityCategory.PATH_TRAVERSAL),
+        ("readfile($v)", VulnerabilityCategory.PATH_TRAVERSAL),
+        ("mysql_query($v)", VulnerabilityCategory.SQL_INJECTION),
+    ],
+)
+def test_php_expanded_sinks(sink: str, expected: VulnerabilityCategory) -> None:
+    source = f'<?php\n$v = $_GET["v"];\n{sink};\n'
+    findings, _ = analyze_php_taint(source, "index.php", [_route("index.php")])
+    assert [f.category for f in findings] == [expected]
+
+
+def test_php_pdo_exec_is_sql_not_command_injection() -> None:
+    source = """<?php
+$id = $_GET["id"];
+$pdo->exec("DELETE FROM t WHERE id = " . $id);
+"""
+    findings, _ = analyze_php_taint(source, "index.php", [_route("index.php")])
+    assert [f.category for f in findings] == [VulnerabilityCategory.SQL_INJECTION]
+    assert findings[0].sink_label == "PDO::exec"
+
+
+def test_php_escapeshellarg_is_a_strong_command_sanitizer() -> None:
+    source = """<?php
+$safe = escapeshellarg($_GET["host"]);
+system("ping " . $safe);
+"""
+    findings, safe = analyze_php_taint(source, "index.php", [_route("index.php")])
+    assert findings == []
+    assert len(safe) == 1
+
+
 def test_php_flow_steps_are_bounded() -> None:
     statements = ['$value = $_GET["q"]']
     previous = "$value"
