@@ -27,17 +27,28 @@ SANITIZER_NAMES = {
     "floatval": "numeric conversion",
     "htmlspecialchars": "HTML escaping",
     "htmlentities": "HTML escaping",
+    "strip_tags": "HTML tag stripping",
     "basename": "basename normalization",
+    "escapeshellarg": "shell argument escaping",
+    "escapeshellcmd": "shell argument escaping",
+    "mysqli_real_escape_string": "SQL string escaping",
+    "addslashes": "SQL string escaping",
+    "urlencode": "URL encoding",
+    "rawurlencode": "URL encoding",
+    "filter_var": "input filtering",
 }
 STRONG_SANITIZERS = {
     VulnerabilityCategory.SQL_INJECTION: {"integer conversion", "numeric conversion"},
     VulnerabilityCategory.XSS: {"HTML escaping"},
+    VulnerabilityCategory.COMMAND_INJECTION: {"shell argument escaping"},
 }
 CATEGORY_NAMES = {
     VulnerabilityCategory.SQL_INJECTION: "SQL Injection",
     VulnerabilityCategory.XSS: "Cross-Site Scripting",
     VulnerabilityCategory.COMMAND_INJECTION: "Command Injection",
     VulnerabilityCategory.FILE_INCLUSION: "File Inclusion",
+    VulnerabilityCategory.PATH_TRAVERSAL: "Path Traversal",
+    VulnerabilityCategory.OPEN_REDIRECT: "Open Redirect",
 }
 MAX_FLOW_STEPS = 64
 
@@ -285,7 +296,10 @@ def _split_arguments(value: str) -> list[str]:
 
 
 def _call_body(statement: str, marker: str) -> str | None:
-    match = re.search(re.escape(marker) + r"\s*\((.*)\)", statement, re.IGNORECASE | re.DOTALL)
+    # Match a bare function call, not a method (``->exec``) or a longer
+    # identifier (``pcntl_exec``, ``$exec``).
+    pattern = r"(?<![\w$>-])" + re.escape(marker) + r"\s*\((.*)\)"
+    match = re.search(pattern, statement, re.IGNORECASE | re.DOTALL)
     return match.group(1) if match is not None else None
 
 
@@ -295,13 +309,28 @@ def _sink(statement: str) -> tuple[VulnerabilityCategory, str, str] | None:
         arguments = _split_arguments(mysqli)
         if len(arguments) >= 2:
             return VulnerabilityCategory.SQL_INJECTION, "mysqli_query", arguments[1]
-    query = re.search(r"->\s*query\s*\((.*)\)", statement, re.IGNORECASE | re.DOTALL)
-    if query is not None:
-        return VulnerabilityCategory.SQL_INJECTION, "PDO::query", query.group(1)
-    for name in ("shell_exec", "passthru", "system", "exec"):
+    mysql = _call_body(statement, "mysql_query")
+    if mysql is not None:
+        return VulnerabilityCategory.SQL_INJECTION, "mysql_query", _split_arguments(mysql)[0]
+    postgres = _call_body(statement, "pg_query")
+    if postgres is not None:
+        arguments = _split_arguments(postgres)
+        return VulnerabilityCategory.SQL_INJECTION, "pg_query", arguments[-1]
+    method_sql = re.search(r"->\s*(query|exec)\s*\((.*)\)", statement, re.IGNORECASE | re.DOTALL)
+    if method_sql is not None:
+        sink_name = f"PDO::{method_sql.group(1)}"
+        return VulnerabilityCategory.SQL_INJECTION, sink_name, method_sql.group(2)
+    header = _call_body(statement, "header")
+    if header is not None and re.search(r"location\s*:", header, re.IGNORECASE):
+        return VulnerabilityCategory.OPEN_REDIRECT, "header", header
+    for name in ("shell_exec", "passthru", "system", "exec", "popen", "proc_open", "eval"):
         body = _call_body(statement, name)
         if body is not None:
             return VulnerabilityCategory.COMMAND_INJECTION, name, _split_arguments(body)[0]
+    for name in ("fopen", "readfile", "file_get_contents", "file_put_contents", "unlink"):
+        body = _call_body(statement, name)
+        if body is not None:
+            return VulnerabilityCategory.PATH_TRAVERSAL, name, _split_arguments(body)[0]
     inclusion = re.search(
         r"\b(include|include_once|require|require_once)\s*(?:\((.*)\)|(.*))",
         statement,
@@ -346,6 +375,34 @@ def _remediation(category: VulnerabilityCategory) -> StaticRemediation:
                 '$pages = ["help" => __DIR__ . "/pages/help.php"];\ninclude $pages[$page];'
             ),
             verification="Confirm unknown page keys are rejected before file resolution.",
+        )
+    if category == VulnerabilityCategory.PATH_TRAVERSAL:
+        return StaticRemediation(
+            summary="Resolve file paths under a fixed base and enforce containment.",
+            guidance=[
+                "Reject absolute paths and '..' segments before opening files.",
+                "Compare realpath() against the intended base directory.",
+            ],
+            safe_example=(
+                "$base = realpath(__DIR__ . '/uploads');\n"
+                "$target = realpath($base . '/' . $name);\n"
+                "if ($target === false || strpos($target, $base) !== 0) { exit; }"
+            ),
+            verification="Confirm encoded and nested traversal names cannot escape the base dir.",
+        )
+    if category == VulnerabilityCategory.OPEN_REDIRECT:
+        return StaticRemediation(
+            summary="Redirect only to vetted, application-controlled destinations.",
+            guidance=[
+                "Allowlist redirect targets or restrict them to relative paths.",
+                "Reject absolute URLs and protocol-relative ('//host') values.",
+            ],
+            safe_example=(
+                "$target = $_GET['next'] ?? '/';\n"
+                "if ($target === '' || $target[0] !== '/' || substr($target, 0, 2) === '//') "
+                "{ $target = '/'; }\nheader('Location: ' . $target);"
+            ),
+            verification="Confirm external hosts and scheme-relative URLs cannot set the target.",
         )
     return StaticRemediation(
         summary="Encode untrusted text for the HTML output context.",
@@ -418,7 +475,10 @@ def analyze_php_taint(
                 title=f"Potential {CATEGORY_NAMES[category]}",
                 status=status,
                 severity=(
-                    Severity.HIGH if category != VulnerabilityCategory.XSS else Severity.MEDIUM
+                    Severity.MEDIUM
+                    if category
+                    in {VulnerabilityCategory.XSS, VulnerabilityCategory.OPEN_REDIRECT}
+                    else Severity.HIGH
                 ),
                 confidence=0.6 if value.sanitizers else 0.88,
                 source_label=value.steps[0].label,
