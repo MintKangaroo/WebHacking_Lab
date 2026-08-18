@@ -776,6 +776,22 @@ def _local_functions(tree: ast.Module) -> dict[str, FunctionDef]:
     return functions
 
 
+def _iter_handlers(tree: ast.Module) -> list[tuple[str, FunctionDef]]:
+    """Yield (name, node) for module functions and (Class.method, node) methods."""
+
+    handlers: list[tuple[str, FunctionDef]] = []
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            handlers.append((node.name, node))
+        elif isinstance(node, ast.ClassDef):
+            handlers.extend(
+                (f"{node.name}.{member.name}", member)
+                for member in node.body
+                if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+            )
+    return handlers
+
+
 def analyze_python_taint(
     content: str,
     file_path: str,
@@ -788,10 +804,8 @@ def analyze_python_taint(
     functions = _local_functions(tree)
     findings: list[ExtractedStaticFinding] = []
     safe_decisions: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        route = by_handler.get(node.name)
+    for handler_name, node in _iter_handlers(tree):
+        route = by_handler.get(handler_name)
         if route is None:
             continue
         analyzer = _FunctionAnalyzer(file_path, route, functions=functions)

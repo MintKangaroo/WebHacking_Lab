@@ -434,6 +434,47 @@ def handler(request):
     assert findings == []
 
 
+def test_django_class_based_view_methods_are_analyzed() -> None:
+    source = """
+class ItemView(View):
+    def get(self, request, item_id):
+        cursor.execute("SELECT * FROM items WHERE id = " + item_id)
+
+    def post(self, request):
+        name = request.POST["name"]
+        return HttpResponse("<b>" + name + "</b>")
+"""
+    routes = [
+        ExtractedRoute(
+            file_path="views.py",
+            framework="Django",
+            methods=["GET"],
+            path="/items/<int:item_id>/",
+            handler_name="ItemView.get",
+            line_start=3,
+            line_end=4,
+            parameters=[StaticParameter(name="item_id", location="path")],
+            authentication=AuthenticationInfo(),
+        ),
+        ExtractedRoute(
+            file_path="views.py",
+            framework="Django",
+            methods=["POST"],
+            path="/items/<int:item_id>/",
+            handler_name="ItemView.post",
+            line_start=6,
+            line_end=8,
+            parameters=[],
+            authentication=AuthenticationInfo(),
+        ),
+    ]
+    findings, _ = analyze_python_taint(source, "views.py", routes)
+    by_handler = {finding.route_handler: finding for finding in findings}
+    assert by_handler["ItemView.get"].category == VulnerabilityCategory.SQL_INJECTION
+    assert by_handler["ItemView.get"].parameter == "item_id"
+    assert by_handler["ItemView.post"].category == VulnerabilityCategory.XSS
+
+
 def test_php_superglobal_sql_and_include_flows() -> None:
     source = """<?php
 $id = $_GET["id"];

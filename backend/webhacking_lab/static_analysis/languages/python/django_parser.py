@@ -17,6 +17,7 @@ from webhacking_lab.static_analysis.models import (
 )
 
 URL_CALLS = {"path", "re_path", "url"}
+HTTP_VERB_METHODS = {"get", "post", "put", "patch", "delete", "head", "options"}
 DJANGO_PATH_PARAMETER = re.compile(r"<(?:[^:>]+:)?([^>]+)>")
 DJANGO_REGEX_PARAMETER = re.compile(r"\(\?P<([^>]+)>")
 AUTH_MARKERS = {
@@ -24,6 +25,9 @@ AUTH_MARKERS = {
     "permission_required",
     "user_passes_test",
     "staff_member_required",
+    "loginrequiredmixin",
+    "permissionrequiredmixin",
+    "userpassestestmixin",
 }
 
 
@@ -75,11 +79,11 @@ def extract_django_urlpatterns(content: str, file_path: str) -> dict[str, tuple[
     return mapping
 
 
-def _auth_info(function: ast.FunctionDef | ast.AsyncFunctionDef) -> AuthenticationInfo:
+def _auth_info(nodes: list[ast.expr]) -> AuthenticationInfo:
     mechanisms = {
         name
-        for decorator in function.decorator_list
-        if any(marker in (name := _view_name(decorator) or "").lower() for marker in AUTH_MARKERS)
+        for node in nodes
+        if any(marker in (name := _view_name(node) or "").lower() for marker in AUTH_MARKERS)
     }
     return AuthenticationInfo(
         required=bool(mechanisms),
@@ -88,9 +92,53 @@ def _auth_info(function: ast.FunctionDef | ast.AsyncFunctionDef) -> Authenticati
     )
 
 
-def _is_view(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    positional = [*function.args.posonlyargs, *function.args.args]
-    return bool(positional) and positional[0].arg == "request"
+def _positional_names(function: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
+    return [argument.arg for argument in (*function.args.posonlyargs, *function.args.args)]
+
+
+def _is_function_view(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    positional = _positional_names(function)
+    return bool(positional) and positional[0] == "request"
+
+
+def _is_view_method(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    return function.name in HTTP_VERB_METHODS and "request" in _positional_names(function)[:2]
+
+
+def _signature_url_params(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> list[str]:
+    return [name for name in _positional_names(function) if name not in {"self", "request"}]
+
+
+def _build_route(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    *,
+    file_path: str,
+    handler_name: str,
+    methods: list[str],
+    mapped: tuple[str, list[str]] | None,
+    default_path: str,
+    auth_nodes: list[ast.expr],
+) -> ExtractedRoute:
+    if mapped is not None:
+        route_path, param_names = mapped
+    else:
+        route_path, param_names = default_path, _signature_url_params(function)
+    parameters = [
+        StaticParameter(name=name, location="path", required=True) for name in param_names
+    ]
+    return ExtractedRoute(
+        file_path=file_path,
+        framework="Django",
+        methods=methods,
+        path=route_path,
+        handler_name=handler_name,
+        line_start=function.lineno,
+        line_end=function.end_lineno or function.lineno,
+        parameters=parameters,
+        authentication=_auth_info(auth_nodes),
+    )
 
 
 def extract_django_routes(
@@ -98,7 +146,7 @@ def extract_django_routes(
     file_path: str,
     url_map: dict[str, tuple[str, list[str]]],
 ) -> list[ExtractedRoute]:
-    """Surface Django view functions (``def view(request, ...)``) as routes."""
+    """Surface Django function views and class-based view handlers as routes."""
 
     try:
         tree = ast.parse(content, filename=file_path, mode="exec")
@@ -106,27 +154,34 @@ def extract_django_routes(
         return []
     routes: list[ExtractedRoute] = []
     for node in tree.body:
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or not _is_view(node):
-            continue
-        mapped = url_map.get(node.name)
-        if mapped is not None:
-            route_path, param_names = mapped
-        else:
-            route_path, param_names = f"/{node.name}/", []
-        parameters = [
-            StaticParameter(name=name, location="path", required=True) for name in param_names
-        ]
-        routes.append(
-            ExtractedRoute(
-                file_path=file_path,
-                framework="Django",
-                methods=["GET", "POST"],
-                path=route_path,
-                handler_name=node.name,
-                line_start=node.lineno,
-                line_end=node.end_lineno or node.lineno,
-                parameters=parameters,
-                authentication=_auth_info(node),
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _is_function_view(node):
+            routes.append(
+                _build_route(
+                    node,
+                    file_path=file_path,
+                    handler_name=node.name,
+                    methods=["GET", "POST"],
+                    mapped=url_map.get(node.name),
+                    default_path=f"/{node.name}/",
+                    auth_nodes=node.decorator_list,
+                )
             )
-        )
+        elif isinstance(node, ast.ClassDef):
+            mapped = url_map.get(node.name)
+            for member in node.body:
+                if not isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if not _is_view_method(member):
+                    continue
+                routes.append(
+                    _build_route(
+                        member,
+                        file_path=file_path,
+                        handler_name=f"{node.name}.{member.name}",
+                        methods=[member.name.upper()],
+                        mapped=mapped,
+                        default_path=f"/{node.name}/",
+                        auth_nodes=[*node.decorator_list, *node.bases, *member.decorator_list],
+                    )
+                )
     return routes

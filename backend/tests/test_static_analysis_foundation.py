@@ -277,6 +277,39 @@ def test_route_extractor_matches_django_views_to_urlpatterns(tmp_path: Path) -> 
     assert [parameter.name for parameter in detail.parameters] == ["item_id"]
 
 
+def test_route_extractor_maps_django_class_based_view_methods(tmp_path: Path) -> None:
+    (tmp_path / "urls.py").write_text(
+        "from django.urls import path\n"
+        "from .views import ItemView\n"
+        "urlpatterns = [path('items/<int:item_id>/', ItemView.as_view())]\n"
+    )
+    (tmp_path / "views.py").write_text(
+        "from django.views import View\n\n"
+        "class ItemView(View):\n"
+        "    def get(self, request, item_id):\n"
+        "        return item_id\n"
+        "    def post(self, request):\n"
+        "        return request\n"
+        "    def helper(self, value):\n"  # not an HTTP verb
+        "        return value\n"
+    )
+    entries, _ = index_source_tree(
+        tmp_path,
+        UploadPolicy(
+            max_archive_bytes=2_000,
+            max_extracted_bytes=2_000,
+            max_files=5,
+            max_single_file_bytes=1_000,
+        ),
+    )
+    routes = extract_routes(tmp_path, entries, ["Django"]).routes
+    handlers = {route.handler_name: route for route in routes if route.framework == "Django"}
+    assert set(handlers) == {"ItemView.get", "ItemView.post"}
+    assert handlers["ItemView.get"].methods == ["GET"]
+    assert handlers["ItemView.get"].path == "/items/<int:item_id>/"
+    assert [p.name for p in handlers["ItemView.get"].parameters] == ["item_id"]
+
+
 def test_route_extractor_skips_django_views_when_framework_absent(tmp_path: Path) -> None:
     (tmp_path / "views.py").write_text("def index(request):\n    return request\n")
     entries, _ = index_source_tree(
