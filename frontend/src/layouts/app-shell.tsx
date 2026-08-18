@@ -51,7 +51,7 @@ const primaryNavigation: NavigationItem[] = [
 const secondaryNavigation: NavigationItem[] = [
   { label: "CTF Workspace", icon: BookOpenText, available: false },
   { label: "Local Labs", icon: FlaskConical, available: false },
-  { label: "Reports", icon: FileText, available: false },
+  { label: "Reports", icon: FileText, available: true, path: "/reports" },
 ];
 
 function NavigationButton({

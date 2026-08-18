@@ -528,3 +528,33 @@ export type ResponseDiff = {
   error_patterns_added: string[];
   unified_body_diff: string;
 };
+
+export type ReportSource = "static" | "scanner";
+
+export type ReportFinding = {
+  source: ReportSource;
+  origin_id: string;
+  category: string;
+  title: string;
+  severity: string;
+  status: string;
+  confidence: number;
+  location: string;
+  detail: string;
+};
+
+export type ReportSummary = {
+  total: number;
+  by_severity: Record<string, number>;
+  by_category: Record<string, number>;
+  by_source: Record<string, number>;
+  by_status: Record<string, number>;
+};
+
+export type ProjectReport = {
+  project_id: string;
+  project_name: string;
+  generated_at: string;
+  summary: ReportSummary;
+  findings: ReportFinding[];
+};
