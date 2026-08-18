@@ -4,6 +4,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from webhacking_lab.api.dependencies import (
@@ -11,6 +12,7 @@ from webhacking_lab.api.dependencies import (
     get_dns_resolver,
     get_request_settings,
 )
+from webhacking_lab.api.schemas.reports import ProjectReport
 from webhacking_lab.api.schemas.resources import (
     ProjectCreate,
     ProjectDetail,
@@ -29,6 +31,7 @@ from webhacking_lab.api.schemas.resources import (
 from webhacking_lab.core.config import Settings
 from webhacking_lab.http_client.scope_guard import DnsResolver
 from webhacking_lab.services.projects import ProjectService, ScopeService, WorkspaceService
+from webhacking_lab.services.reports import ReportService, render_report_markdown
 
 router = APIRouter(tags=["projects"])
 Session = Annotated[AsyncSession, Depends(get_db_session)]
@@ -61,6 +64,25 @@ async def list_projects(session: Session) -> list[ProjectSummary]:
 @router.get("/projects/{project_id}", response_model=ProjectDetail, summary="Get a project")
 async def get_project(project_id: UUID, session: Session) -> ProjectDetail:
     return await ProjectService(session).get(project_id)
+
+
+@router.get(
+    "/projects/{project_id}/report",
+    response_model=ProjectReport,
+    summary="Consolidated static and scanner findings report",
+)
+async def get_project_report(project_id: UUID, session: Session) -> ProjectReport:
+    return await ReportService(session).build(project_id)
+
+
+@router.get(
+    "/projects/{project_id}/report/markdown",
+    response_class=PlainTextResponse,
+    summary="Consolidated findings report as Markdown",
+)
+async def get_project_report_markdown(project_id: UUID, session: Session) -> PlainTextResponse:
+    report = await ReportService(session).build(project_id)
+    return PlainTextResponse(render_report_markdown(report), media_type="text/markdown")
 
 
 @router.patch("/projects/{project_id}", response_model=ProjectDetail, summary="Update a project")
