@@ -475,6 +475,66 @@ class ItemView(View):
     assert by_handler["ItemView.post"].category == VulnerabilityCategory.XSS
 
 
+def test_python_open_redirect_flow_and_internal_target_is_safe() -> None:
+    vulnerable = """
+def handler():
+    target = request.args["next"]
+    return redirect(target)
+"""
+    findings, _ = analyze_python_taint(vulnerable, "app.py", [_route("app.py")])
+    assert [f.category for f in findings] == [VulnerabilityCategory.OPEN_REDIRECT]
+    assert findings[0].parameter == "next"
+
+    safe = """
+def handler():
+    return redirect(url_for("index"))
+"""
+    assert analyze_python_taint(safe, "app.py", [_route("app.py")])[0] == []
+
+
+def test_python_command_injection_sinks_cover_popen_eval_and_getoutput() -> None:
+    for sink in ("os.popen(cmd)", "eval(cmd)", "subprocess.getoutput(cmd)"):
+        source = f"""
+def handler():
+    cmd = request.args["c"]
+    return {sink}
+"""
+        findings, _ = analyze_python_taint(source, "app.py", [_route("app.py")])
+        assert [f.category for f in findings] == [VulnerabilityCategory.COMMAND_INJECTION], sink
+
+
+def test_python_ssti_via_environment_from_string() -> None:
+    source = """
+def handler():
+    tpl = request.args["t"]
+    return Environment().from_string(tpl)
+"""
+    findings, _ = analyze_python_taint(source, "app.py", [_route("app.py")])
+    assert [f.category for f in findings] == [
+        VulnerabilityCategory.SERVER_SIDE_TEMPLATE_INJECTION
+    ]
+
+
+def test_python_shlex_quote_and_bleach_clean_are_strong_sanitizers() -> None:
+    quoted = """
+def handler():
+    host = shlex.quote(request.args["h"])
+    os.system("ping " + host)
+"""
+    findings, safe = analyze_python_taint(quoted, "app.py", [_route("app.py")])
+    assert findings == []
+    assert len(safe) == 1
+
+    cleaned = """
+def handler():
+    value = bleach.clean(request.args["v"])
+    return make_response(value)
+"""
+    findings, safe = analyze_python_taint(cleaned, "app.py", [_route("app.py")])
+    assert findings == []
+    assert len(safe) == 1
+
+
 def test_php_superglobal_sql_and_include_flows() -> None:
     source = """<?php
 $id = $_GET["id"];

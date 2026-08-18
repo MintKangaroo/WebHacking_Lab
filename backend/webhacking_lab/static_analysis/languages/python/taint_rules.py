@@ -51,10 +51,12 @@ SANITIZERS = {
     "escape": "HTML escaping",
     "html.escape": "HTML escaping",
     "markupsafe.escape": "HTML escaping",
+    "bleach.clean": "HTML sanitization",
     "secure_filename": "filename normalization",
     "werkzeug.utils.secure_filename": "filename normalization",
     "basename": "basename normalization",
     "os.path.basename": "basename normalization",
+    "shlex.quote": "shell argument quoting",
 }
 STRONG_SANITIZERS = {
     VulnerabilityCategory.SQL_INJECTION: {
@@ -62,7 +64,8 @@ STRONG_SANITIZERS = {
         "numeric conversion",
         "UUID validation",
     },
-    VulnerabilityCategory.XSS: {"HTML escaping"},
+    VulnerabilityCategory.XSS: {"HTML escaping", "HTML sanitization"},
+    VulnerabilityCategory.COMMAND_INJECTION: {"shell argument quoting"},
 }
 CATEGORY_NAMES = {
     VulnerabilityCategory.SQL_INJECTION: "SQL Injection",
@@ -70,6 +73,7 @@ CATEGORY_NAMES = {
     VulnerabilityCategory.COMMAND_INJECTION: "Command Injection",
     VulnerabilityCategory.SERVER_SIDE_TEMPLATE_INJECTION: "Server-Side Template Injection",
     VulnerabilityCategory.PATH_TRAVERSAL: "Path Traversal",
+    VulnerabilityCategory.OPEN_REDIRECT: "Open Redirect",
 }
 MAX_FLOW_STEPS = 64
 MAX_CALL_DEPTH = 3
@@ -446,6 +450,21 @@ def _remediation(category: VulnerabilityCategory) -> StaticRemediation:
                 "Test that encoded and nested traversal names are rejected without reading files."
             ),
         )
+    if category == VulnerabilityCategory.OPEN_REDIRECT:
+        return StaticRemediation(
+            summary="Redirect only to vetted, application-controlled destinations.",
+            guidance=[
+                "Allowlist redirect targets or restrict them to relative paths.",
+                "Reject absolute URLs and protocol-relative (//host) values.",
+            ],
+            safe_example=(
+                'target = request.args.get("next", "/")\n'
+                'if not target.startswith("/") or target.startswith("//"):\n'
+                '    target = "/"\n'
+                "return redirect(target)"
+            ),
+            verification="Confirm external hosts and scheme-relative URLs cannot set the target.",
+        )
     return StaticRemediation(
         summary="Encode untrusted data for its output context.",
         guidance=["Use an autoescaping template rather than a raw HTML response."],
@@ -459,9 +478,14 @@ def _sink_details(call: ast.Call) -> tuple[VulnerabilityCategory, str, ast.AST] 
     suffix = call_name.rsplit(".", 1)[-1]
     if suffix in {"execute", "executemany", "query", "raw"} and call.args:
         return VulnerabilityCategory.SQL_INJECTION, call_name, call.args[0]
-    if suffix == "render_template_string" and call.args:
+    if suffix in {"render_template_string", "from_string"} and call.args:
         return VulnerabilityCategory.SERVER_SIDE_TEMPLATE_INJECTION, call_name, call.args[0]
-    if call_name == "os.system" and call.args:
+    if call_name in {"os.system", "os.popen", "eval", "exec"} and call.args:
+        return VulnerabilityCategory.COMMAND_INJECTION, call_name, call.args[0]
+    if (
+        call_name in {"subprocess.getoutput", "subprocess.getstatusoutput", "commands.getoutput"}
+        and call.args
+    ):
         return VulnerabilityCategory.COMMAND_INJECTION, call_name, call.args[0]
     if call_name in {"subprocess.run", "subprocess.call", "subprocess.Popen"} and call.args:
         shell_enabled = any(
@@ -474,6 +498,8 @@ def _sink_details(call: ast.Call) -> tuple[VulnerabilityCategory, str, ast.AST] 
             return VulnerabilityCategory.COMMAND_INJECTION, call_name, call.args[0]
     if suffix in {"open", "read_text", "write_text", "send_file"} and call.args:
         return VulnerabilityCategory.PATH_TRAVERSAL, call_name, call.args[0]
+    if suffix in {"redirect", "HttpResponseRedirect", "RedirectResponse"} and call.args:
+        return VulnerabilityCategory.OPEN_REDIRECT, call_name, call.args[0]
     if suffix in {"Response", "HTMLResponse", "HttpResponse", "make_response"} and call.args:
         return VulnerabilityCategory.XSS, call_name, call.args[0]
     return None
