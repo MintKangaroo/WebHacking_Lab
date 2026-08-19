@@ -1,6 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { ClipboardCopy, FileText, ShieldAlert, X } from "lucide-react";
-import { useState } from "react";
+import {
+  ArrowDownUp,
+  ClipboardCopy,
+  FileText,
+  Search,
+  ShieldAlert,
+  X,
+} from "lucide-react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { getProjects } from "../api/projects";
@@ -38,11 +45,32 @@ function orderedSeverities(counts: Record<string, number>) {
   return [...known, ...extra];
 }
 
+function severityRank(severity: string) {
+  const index = SEVERITY_ORDER.indexOf(severity);
+  return index === -1 ? SEVERITY_ORDER.length : index;
+}
+
+type SortField = "severity" | "title" | "category" | "source";
+
+function compareFindings(a: ReportFinding, b: ReportFinding, field: SortField): number {
+  if (field === "severity") return severityRank(a.severity) - severityRank(b.severity);
+  return a[field].localeCompare(b[field]);
+}
+
+const selectClass =
+  "h-9 rounded-md border border-line bg-black/20 px-2 text-sm text-slate-200 outline-none focus:border-cyan-400/50";
+
 type Selection = { source: ReportSource; originId: string };
 
 export function ReportsPage() {
   const [selected, setSelected] = useState<string>("");
   const [finding, setFinding] = useState<Selection | null>(null);
+  const [severityFilter, setSeverityFilter] = useState<string>("all");
+  const [sourceFilter, setSourceFilter] = useState<string>("all");
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [query, setQuery] = useState<string>("");
+  const [sortField, setSortField] = useState<SortField>("severity");
+  const [descending, setDescending] = useState<boolean>(false);
   const projects = useQuery({
     queryKey: ["projects"],
     queryFn: ({ signal }) => getProjects(signal),
@@ -64,9 +92,40 @@ export function ReportsPage() {
     enabled: Boolean(projectId && finding),
   });
 
+  const allFindings = useMemo(() => report.data?.findings ?? [], [report.data?.findings]);
+  const categories = useMemo(
+    () => Array.from(new Set(allFindings.map((item) => item.category))).sort(),
+    [allFindings],
+  );
+
+  const visibleFindings = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    const filtered = allFindings.filter((item) => {
+      if (severityFilter !== "all" && item.severity !== severityFilter) return false;
+      if (sourceFilter !== "all" && item.source !== sourceFilter) return false;
+      if (categoryFilter !== "all" && item.category !== categoryFilter) return false;
+      if (
+        needle &&
+        !`${item.title} ${item.location} ${item.category}`.toLowerCase().includes(needle)
+      ) {
+        return false;
+      }
+      return true;
+    });
+    filtered.sort((a, b) => {
+      const ordered = compareFindings(a, b, sortField);
+      return descending ? -ordered : ordered;
+    });
+    return filtered;
+  }, [allFindings, severityFilter, sourceFilter, categoryFilter, query, sortField, descending]);
+
   const changeProject = (value: string) => {
     setSelected(value);
     setFinding(null);
+    setSeverityFilter("all");
+    setSourceFilter("all");
+    setCategoryFilter("all");
+    setQuery("");
   };
 
   const copyMarkdown = async () => {
@@ -156,11 +215,85 @@ export function ReportsPage() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className={finding ? "lg:col-span-2" : "lg:col-span-3"}>
-          <CardHeader>
+          <CardHeader className="gap-3">
             <CardTitle className="flex items-center gap-2 text-sm text-slate-200">
               <ShieldAlert className="size-4 text-amber-300" /> Findings
-              {summary ? <Badge tone="neutral">{summary.total}</Badge> : null}
+              {summary ? (
+                <Badge tone="neutral">
+                  {visibleFindings.length} / {summary.total}
+                </Badge>
+              ) : null}
             </CardTitle>
+            {allFindings.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="relative">
+                  <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-slate-500" />
+                  <input
+                    type="search"
+                    aria-label="Search findings"
+                    placeholder="Search title, location, category"
+                    className="h-9 w-56 rounded-md border border-line bg-black/20 pl-7 pr-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-cyan-400/50"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                  />
+                </label>
+                <select
+                  aria-label="Filter by severity"
+                  className={selectClass}
+                  value={severityFilter}
+                  onChange={(event) => setSeverityFilter(event.target.value)}
+                >
+                  <option value="all">All severities</option>
+                  {orderedSeverities(summary?.by_severity ?? {}).map((severity) => (
+                    <option key={severity} value={severity}>
+                      {severity}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Filter by source"
+                  className={selectClass}
+                  value={sourceFilter}
+                  onChange={(event) => setSourceFilter(event.target.value)}
+                >
+                  <option value="all">All sources</option>
+                  <option value="static">static</option>
+                  <option value="scanner">scanner</option>
+                </select>
+                <select
+                  aria-label="Filter by category"
+                  className={selectClass}
+                  value={categoryFilter}
+                  onChange={(event) => setCategoryFilter(event.target.value)}
+                >
+                  <option value="all">All categories</option>
+                  {categories.map((category) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Sort by"
+                  className={selectClass}
+                  value={sortField}
+                  onChange={(event) => setSortField(event.target.value as SortField)}
+                >
+                  <option value="severity">Sort: severity</option>
+                  <option value="category">Sort: category</option>
+                  <option value="title">Sort: title</option>
+                  <option value="source">Sort: source</option>
+                </select>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label="Toggle sort direction"
+                  onClick={() => setDescending((value) => !value)}
+                >
+                  <ArrowDownUp className="size-4" /> {descending ? "Desc" : "Asc"}
+                </Button>
+              </div>
+            ) : null}
           </CardHeader>
           <CardContent>
             {report.isLoading ? (
@@ -169,16 +302,20 @@ export function ReportsPage() {
               <p className="py-8 text-center text-sm text-red-400">
                 The report could not be loaded.
               </p>
-            ) : report.data && report.data.findings.length > 0 ? (
-              <FindingsTable
-                findings={report.data.findings}
-                selectedId={finding?.originId ?? null}
-                onSelect={(row) => setFinding({ source: row.source, originId: row.origin_id })}
-              />
-            ) : (
+            ) : allFindings.length === 0 ? (
               <p className="py-8 text-center text-sm text-slate-500">
                 No static or scanner findings were recorded for this project.
               </p>
+            ) : visibleFindings.length === 0 ? (
+              <p className="py-8 text-center text-sm text-slate-500">
+                No findings match the current filters.
+              </p>
+            ) : (
+              <FindingsTable
+                findings={visibleFindings}
+                selectedId={finding?.originId ?? null}
+                onSelect={(row) => setFinding({ source: row.source, originId: row.origin_id })}
+              />
             )}
           </CardContent>
         </Card>

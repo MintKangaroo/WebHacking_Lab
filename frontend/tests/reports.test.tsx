@@ -146,6 +146,29 @@ describe("Findings report page", () => {
     expect(screen.getByText(/cursor.execute\('... = \?'/)).toBeInTheDocument();
   });
 
+  it("filters findings by source and search text", async () => {
+    window.history.pushState({}, "", "/reports");
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = pathOf(input);
+      if (path === "/api/projects") return Promise.resolve(response([project]));
+      if (path === `/api/projects/${projectId}/report`) return Promise.resolve(response(report));
+      return Promise.resolve(response({ message: "not found" }, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    expect(await screen.findByText("Missing HSTS")).toBeInTheDocument();
+
+    // Filtering to static findings hides the scanner finding.
+    await userEvent.selectOptions(screen.getByLabelText("Filter by source"), "static");
+    expect(screen.queryByText("Missing HSTS")).not.toBeInTheDocument();
+    expect(screen.getByText("Potential SQL Injection")).toBeInTheDocument();
+
+    // A non-matching search hides everything and shows the empty-filter message.
+    await userEvent.type(screen.getByLabelText("Search findings"), "nonexistent");
+    expect(await screen.findByText(/No findings match the current filters/i)).toBeInTheDocument();
+  });
+
   it("shows an empty state when a project has no findings", async () => {
     window.history.pushState({}, "", "/reports");
     const empty: ProjectReport = {
