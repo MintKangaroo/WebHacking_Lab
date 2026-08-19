@@ -582,3 +582,21 @@ export type ReportFindingDetail = {
   safe_example: string | null;
   limitations: string[];
 };
+
+export type LabInfo = {
+  id: string;
+  name: string;
+  category: string;
+  difficulty: string;
+  description: string;
+  base_url: string;
+  target_path: string;
+  objective: string;
+  hint: string;
+};
+
+export type LabCatalog = {
+  enabled: boolean;
+  warning: string;
+  labs: LabInfo[];
+};

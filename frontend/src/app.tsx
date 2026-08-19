@@ -12,6 +12,7 @@ import { TooltipProvider } from "./components/ui/tooltip";
 import { AppShell } from "./layouts/app-shell";
 import { DashboardPage } from "./pages/dashboard-page";
 import { CodeAnalysisPage } from "./pages/code-analysis-page";
+import { LabsPage } from "./pages/labs-page";
 import { ProjectPage } from "./pages/project-page";
 import { ProjectsPage } from "./pages/projects-page";
 import { RepeaterPage } from "./pages/repeater-page";
@@ -99,6 +100,7 @@ export function App() {
                     <Route path="scans" element={<ScansPage />} />
                     <Route path="code-analysis" element={<CodeAnalysisPage />} />
                     <Route path="reports" element={<ReportsPage />} />
+                    <Route path="labs" element={<LabsPage />} />
                     <Route path="*" element={<Navigate to="/" replace />} />
                   </Route>
                 </Routes>
