@@ -688,7 +688,7 @@ def test_taint_coordinator_warns_for_oversized_and_malformed_files(tmp_path: Pat
     result = analyze_static_data_flows(
         tmp_path,
         [
-            _indexed("ignored.js", "javascript", 10),
+            _indexed("ignored.css", "css", 10),
             _indexed("oversized.py", "python", MAX_TAINT_FILE_BYTES + 1),
             _indexed("malformed.py", "python", malformed.stat().st_size),
         ],
