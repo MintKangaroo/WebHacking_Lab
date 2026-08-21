@@ -59,4 +59,42 @@ describe("Local labs page", () => {
     expect(screen.getByText(/http:\/\/lab-sqli:5000/)).toBeInTheDocument();
     expect(screen.getByText(/Disabled by default/i)).toBeInTheDocument();
   });
+
+  it("disables the scan action while labs are turned off", async () => {
+    window.history.pushState({}, "", "/labs");
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = pathOf(input);
+      if (path === "/api/labs") return Promise.resolve(response(catalog));
+      return Promise.resolve(response({ message: "not found" }, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    const button = await screen.findByRole("button", { name: /Enable labs to scan/i });
+    expect(button).toBeDisabled();
+  });
+
+  it("links the scan action to a pre-filled scan plan when labs are enabled", async () => {
+    window.history.pushState({}, "", "/labs");
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = pathOf(input);
+      if (path === "/api/labs") {
+        return Promise.resolve(response({ ...catalog, enabled: true }));
+      }
+      return Promise.resolve(response({ message: "not found" }, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    const link = await screen.findByRole("link", { name: /Scan this lab/i });
+    const href = link.getAttribute("href") ?? "";
+    expect(href).toContain("/scans?");
+    expect(href).toContain("profile=ctf");
+    expect(href).toContain("labId=sqli");
+    expect(decodeURIComponent(href)).toContain("http://lab-sqli:5000/products?id=1");
+    expect(href).toContain("scopeHost=lab-sqli");
+    expect(href).toContain("scopePort=5000");
+  });
 });

@@ -5,6 +5,7 @@ import {
   Clock3,
   ExternalLink,
   Fingerprint,
+  FlaskConical,
   Gauge,
   Globe2,
   ListTree,
@@ -13,12 +14,17 @@ import {
   ShieldCheck,
   SquareMousePointer,
 } from "lucide-react";
-import { useMemo, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 
 import { dashboardQueryOptions } from "../api/dashboard";
-import { getProject, getProjects } from "../api/projects";
+import {
+  checkScope,
+  createScope,
+  getProject,
+  getProjects,
+} from "../api/projects";
 import {
   approveScanTests,
   cancelScan,
@@ -119,15 +125,59 @@ function ScanList({
   );
 }
 
+type LabContext = {
+  labId: string;
+  scopeScheme: "http" | "https";
+  scopeHost: string;
+  scopePort: number | null;
+};
+
+type LabPrefill = {
+  target: string;
+  profile: Extract<ScannerProfile, "passive" | "safe" | "ctf">;
+  expectedUse: string;
+  context: LabContext;
+};
+
+/** Read a lab pre-fill from the `/scans` query string, or null when absent. */
+function parseLabPrefill(searchParams: URLSearchParams): LabPrefill | null {
+  const labId = searchParams.get("labId");
+  const target = searchParams.get("target");
+  if (!labId || !target) return null;
+  const profile = searchParams.get("profile");
+  return {
+    target,
+    profile: profile === "safe" || profile === "ctf" ? profile : "ctf",
+    expectedUse: `Isolated local lab exercise: ${labId}`,
+    context: {
+      labId,
+      scopeScheme: searchParams.get("scopeScheme") === "https" ? "https" : "http",
+      scopeHost: searchParams.get("scopeHost") ?? "",
+      scopePort: searchParams.get("scopePort")
+        ? Number(searchParams.get("scopePort"))
+        : null,
+    },
+  };
+}
+
 export function ScansPage() {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Parse the lab pre-fill exactly once (lazy initializer) so later edits and
+  // the URL cleanup below never re-seed the form.
+  const [seeded] = useState<LabPrefill | null>(() =>
+    searchParams.has("labId") ? parseLabPrefill(searchParams) : null,
+  );
+
   const [projectId, setProjectId] = useState("");
   const [workspaceId, setWorkspaceId] = useState("");
-  const [target, setTarget] = useState("http://127.0.0.1:8001/");
+  const [target, setTarget] = useState(seeded?.target ?? "http://127.0.0.1:8001/");
   const [profile, setProfile] = useState<Extract<ScannerProfile, "passive" | "safe" | "ctf">>(
-    "passive",
+    seeded?.profile ?? "passive",
   );
-  const [expectedUse, setExpectedUse] = useState("Authorized application inventory and safe validation");
+  const [expectedUse, setExpectedUse] = useState(
+    seeded?.expectedUse ?? "Authorized application inventory and safe validation",
+  );
   const [confirmed, setConfirmed] = useState(false);
   const [maxDepth, setMaxDepth] = useState(2);
   const [maxPages, setMaxPages] = useState(20);
@@ -137,6 +187,15 @@ export function ScansPage() {
   const [selectedScanId, setSelectedScanId] = useState("");
   const [selectedTestIds, setSelectedTestIds] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<"endpoints" | "parameters" | "tests" | "findings" | "events">("endpoints");
+  const labContext = seeded?.context ?? null;
+
+  // Drop the query string once the pre-fill is applied (navigation only, no
+  // form state is touched here).
+  useEffect(() => {
+    if (seeded && searchParams.has("labId")) {
+      setSearchParams({}, { replace: true });
+    }
+  }, [seeded, searchParams, setSearchParams]);
 
   const overview = useQuery(dashboardQueryOptions());
   const ctfModeEnabled = overview.data?.safety.ctf_mode_enabled ?? false;
@@ -157,6 +216,37 @@ export function ScansPage() {
     enabledWorkspaces.find((workspace) => workspace.id === workspaceId)?.id ??
     enabledWorkspaces[0]?.id ??
     "";
+
+  const trimmedTarget = target.trim();
+  const scopeStatus = useQuery({
+    queryKey: ["scope-check", effectiveProjectId, trimmedTarget],
+    queryFn: () => checkScope(effectiveProjectId, trimmedTarget),
+    enabled: Boolean(labContext && effectiveProjectId && trimmedTarget),
+  });
+  const addScope = useMutation({
+    mutationFn: () => {
+      if (!labContext) throw new Error("No lab target to register");
+      return createScope(effectiveProjectId, {
+        scheme: labContext.scopeScheme,
+        hostname: labContext.scopeHost,
+        port: labContext.scopePort,
+        path_prefix: "/",
+        allow_subdomains: false,
+        authorization_confirmed: true,
+        authorization_notes: `Isolated local lab: ${labContext.labId}`,
+      });
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["project", effectiveProjectId] }),
+        queryClient.invalidateQueries({
+          queryKey: ["scope-check", effectiveProjectId, trimmedTarget],
+        }),
+      ]);
+      toast.success("Lab host added to project scope");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 
   const scans = useQuery({
     queryKey: ["scans", effectiveProjectId],
@@ -351,7 +441,7 @@ export function ScansPage() {
                   >
                     <option value="passive">PASSIVE · inventory only</option>
                     <option value="safe">SAFE · plan then approve tests</option>
-                    {ctfModeEnabled && (
+                    {(ctfModeEnabled || profile === "ctf") && (
                       <option value="ctf">CTF · auto-run read-only probes</option>
                     )}
                   </select>
@@ -392,6 +482,41 @@ export function ScansPage() {
                   Starting URL
                   <input aria-label="Starting URL" required value={target} onChange={(event) => setTarget(event.target.value)} className={`${fieldClass} mt-1.5 font-mono`} />
                 </label>
+                {labContext && (
+                  <div className="space-y-2 rounded-lg border border-cyan-400/20 bg-cyan-400/[0.04] p-3">
+                    <p className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wider text-cyan-300">
+                      <FlaskConical className="size-3.5" /> Lab target · {labContext.labId}
+                    </p>
+                    {scopeStatus.data?.allowed ? (
+                      <p className="flex items-center gap-2 text-xs text-emerald-300">
+                        <CheckCircle2 className="size-3.5" /> This lab host is in the selected project scope.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        <p className="text-xs leading-5 text-slate-400">
+                          {labContext.scopeScheme}://{labContext.scopeHost}
+                          {labContext.scopePort ? `:${labContext.scopePort}` : ""} is not in this
+                          project&apos;s scope yet. Add it to authorize the scan.
+                        </p>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          disabled={!effectiveProjectId || addScope.isPending}
+                          onClick={() => addScope.mutate()}
+                        >
+                          {addScope.isPending ? "Adding…" : "Add lab host to scope"}
+                        </Button>
+                      </div>
+                    )}
+                    {profile === "ctf" && !ctfModeEnabled && (
+                      <p className="flex items-start gap-2 text-xs leading-5 text-amber-200/80">
+                        <ShieldAlert className="mt-0.5 size-3.5 shrink-0" /> CTF probing is disabled on
+                        this backend. Set WEBHACKING_CTF_MODE_ENABLED=true to auto-run lab probes.
+                      </p>
+                    )}
+                  </div>
+                )}
                 <label className="block text-xs text-slate-400">
                   Authorized purpose
                   <textarea
