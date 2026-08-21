@@ -7,20 +7,7 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import type { LabInfo } from "../types/resources";
-
-/** Build the `/scans` query string that pre-fills a scan plan for a lab. */
-function buildLabScanSearch(lab: LabInfo): string {
-  const url = new URL(lab.base_url);
-  const params = new URLSearchParams({
-    labId: lab.id,
-    target: `${lab.base_url}${lab.target_path}`,
-    profile: "ctf",
-    scopeScheme: url.protocol.replace(":", ""),
-    scopeHost: url.hostname,
-  });
-  if (url.port) params.set("scopePort", url.port);
-  return `?${params.toString()}`;
-}
+import { buildLabScanSearch } from "../utils/lab-scan";
 
 export function LabsPage() {
   const catalog = useQuery({ queryKey: ["labs"], queryFn: ({ signal }) => getLabs(signal) });
