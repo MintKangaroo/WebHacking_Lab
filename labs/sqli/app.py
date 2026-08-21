@@ -46,7 +46,9 @@ def product_query(connection: sqlite3.Connection, id_param: str) -> list[tuple[o
 
 
 class LabHandler(BaseHTTPRequestHandler):
-    connection: sqlite3.Connection
+    # NOTE: ``connection`` is reserved by ``BaseHTTPRequestHandler`` for the
+    # client socket, so the training database uses a distinct attribute name.
+    db_connection: sqlite3.Connection
 
     def _send(self, status: int, body: str) -> None:
         payload = body.encode("utf-8")
@@ -72,7 +74,7 @@ class LabHandler(BaseHTTPRequestHandler):
         if parsed.path == "/products":
             id_param = parse_qs(parsed.query).get("id", ["1"])[0]
             try:
-                rows = product_query(self.connection, id_param)
+                rows = product_query(self.db_connection, id_param)
             except sqlite3.Error as error:
                 # Error-based signal: the raw database error is reflected.
                 self._send(500, f"<pre>SQL error: {html.escape(str(error))}</pre>")
@@ -91,7 +93,7 @@ class LabHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    LabHandler.connection = build_connection()
+    LabHandler.db_connection = build_connection()
     server = ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), LabHandler)  # noqa: S104
     server.serve_forever()
 
