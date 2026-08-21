@@ -1,10 +1,26 @@
 import { useQuery } from "@tanstack/react-query";
-import { FlaskConical, Lightbulb, Target, TriangleAlert } from "lucide-react";
+import { FlaskConical, Lightbulb, Radar, Target, TriangleAlert } from "lucide-react";
+import { Link } from "react-router-dom";
 
 import { getLabs } from "../api/labs";
 import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import type { LabInfo } from "../types/resources";
+
+/** Build the `/scans` query string that pre-fills a scan plan for a lab. */
+function buildLabScanSearch(lab: LabInfo): string {
+  const url = new URL(lab.base_url);
+  const params = new URLSearchParams({
+    labId: lab.id,
+    target: `${lab.base_url}${lab.target_path}`,
+    profile: "ctf",
+    scopeScheme: url.protocol.replace(":", ""),
+    scopeHost: url.hostname,
+  });
+  if (url.port) params.set("scopePort", url.port);
+  return `?${params.toString()}`;
+}
 
 export function LabsPage() {
   const catalog = useQuery({ queryKey: ["labs"], queryFn: ({ signal }) => getLabs(signal) });
@@ -41,7 +57,7 @@ export function LabsPage() {
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {(catalog.data?.labs ?? []).map((lab) => (
-            <LabCard key={lab.id} lab={lab} />
+            <LabCard key={lab.id} lab={lab} enabled={catalog.data?.enabled ?? false} />
           ))}
         </div>
       )}
@@ -49,7 +65,7 @@ export function LabsPage() {
   );
 }
 
-function LabCard({ lab }: { lab: LabInfo }) {
+function LabCard({ lab, enabled }: { lab: LabInfo; enabled: boolean }) {
   return (
     <Card>
       <CardHeader>
@@ -75,6 +91,25 @@ function LabCard({ lab }: { lab: LabInfo }) {
           Target: {lab.base_url}
           {lab.target_path}
         </p>
+        <div className="pt-1">
+          {enabled ? (
+            <Button asChild size="sm" className="w-full">
+              <Link to={`/scans${buildLabScanSearch(lab)}`}>
+                <Radar className="size-3.5" /> Scan this lab
+              </Link>
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="secondary"
+              className="w-full"
+              disabled
+              title="Start the labs profile first: docker compose --profile labs up"
+            >
+              <Radar className="size-3.5" /> Enable labs to scan
+            </Button>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
