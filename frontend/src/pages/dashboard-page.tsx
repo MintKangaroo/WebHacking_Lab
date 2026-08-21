@@ -7,6 +7,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { Suspense } from "react";
+import { Link } from "react-router-dom";
 
 import { dashboardQueryOptions } from "../api/dashboard";
 import { Badge } from "../components/ui/badge";
@@ -18,6 +19,7 @@ import {
   SeverityChart,
 } from "../features/dashboard/dashboard-charts";
 import { DashboardSkeleton } from "../features/dashboard/dashboard-skeleton";
+import { LabsWidget } from "../features/dashboard/labs-widget";
 import { MetricCard } from "../features/dashboard/metric-card";
 import { SafetyPanel } from "../features/dashboard/safety-panel";
 
@@ -44,9 +46,11 @@ function DashboardContent() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="secondary" disabled>
-            <FlaskConical className="size-4" />
-            Start local lab
+          <Button asChild variant="secondary">
+            <Link to="/labs">
+              <FlaskConical className="size-4" />
+              Local labs
+            </Link>
           </Button>
           <Button disabled>
             <Plus className="size-4" />
@@ -89,10 +93,14 @@ function DashboardContent() {
         <SeverityChart data={data.severity_distribution} />
       </section>
 
-      <section aria-label="Analysis operations" className="grid gap-4 xl:grid-cols-4">
+      <section aria-label="Analysis operations" className="grid gap-4 xl:grid-cols-3">
         <ActivityFeed items={data.recent_activity} />
         <AnalysisTypesChart data={data.analysis_types} />
+      </section>
+
+      <section aria-label="Safety and labs" className="grid gap-4 xl:grid-cols-2">
         <SafetyPanel safety={data.safety} />
+        <LabsWidget />
       </section>
 
       <footer className="flex flex-col gap-2 border-t border-line py-3 text-[10px] text-slate-600 sm:flex-row sm:items-center">
