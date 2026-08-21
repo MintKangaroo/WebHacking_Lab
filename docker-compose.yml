@@ -96,6 +96,110 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  # Reflected XSS training target. Opt-in, isolated_labs only (see lab-sqli).
+  lab-xss:
+    build:
+      context: labs/xss
+      dockerfile: Dockerfile
+    profiles:
+      - labs
+    networks:
+      - isolated_labs
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=2)"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  # IDOR training target. Opt-in, isolated_labs only (see lab-sqli).
+  lab-idor:
+    build:
+      context: labs/idor
+      dockerfile: Dockerfile
+    profiles:
+      - labs
+    networks:
+      - isolated_labs
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=2)"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  # Path traversal training target. Opt-in, isolated_labs only (see lab-sqli).
+  lab-path-traversal:
+    build:
+      context: labs/path-traversal
+      dockerfile: Dockerfile
+    profiles:
+      - labs
+    networks:
+      - isolated_labs
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=2)"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  # Command injection training target. Opt-in, isolated_labs only (see lab-sqli).
+  lab-cmdi:
+    build:
+      context: labs/cmdi
+      dockerfile: Dockerfile
+    profiles:
+      - labs
+    networks:
+      - isolated_labs
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=2)"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
 networks:
   application:
     driver: bridge
