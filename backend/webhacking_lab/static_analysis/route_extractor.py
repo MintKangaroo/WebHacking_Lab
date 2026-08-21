@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from webhacking_lab.static_analysis.languages.javascript.parser import extract_express_routes
 from webhacking_lab.static_analysis.languages.python.ast_parser import extract_python_routes
 from webhacking_lab.static_analysis.languages.python.django_parser import (
     extract_django_routes,
@@ -50,6 +51,7 @@ def extract_routes(
     warnings: list[str] = []
     framework_set = set(frameworks)
     django = "Django" in framework_set
+    express = "Express" in framework_set
     python_files = [
         entry
         for entry in files
@@ -69,15 +71,19 @@ def extract_routes(
                 continue
             content = path.read_text(encoding="utf-8", errors="replace")
             try:
-                routes.extend(
-                    extract_python_routes(content, entry.relative_path, framework_set)
-                )
+                routes.extend(extract_python_routes(content, entry.relative_path, framework_set))
             except (SyntaxError, ValueError, TypeError) as error:
                 warnings.append(
                     f"Skipped malformed Python AST: {entry.relative_path} ({type(error).__name__})"
                 )
             if django:
                 routes.extend(extract_django_routes(content, entry.relative_path, url_map))
+        elif entry.language == "javascript" and express:
+            if entry.size_bytes > MAX_AST_FILE_BYTES:
+                warnings.append(f"Skipped oversized JavaScript input: {entry.relative_path}")
+                continue
+            content = path.read_text(encoding="utf-8", errors="replace")
+            routes.extend(extract_express_routes(content, entry.relative_path))
         elif entry.language == "php":
             routes.append(_php_route(entry.relative_path))
     routes.sort(key=lambda item: (item.file_path, item.line_start, item.path))
