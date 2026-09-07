@@ -2,7 +2,7 @@
 
 CTF, 로컬 랩, 명시적으로 허가받은 모의해킹의 HTTP 증거를 한곳에서 분석하는 안전 중심 웹 보안 워크스페이스입니다.
 
-요청·응답 정규화, 민감정보 마스킹, Scope 관리, 제한적 외부 요청, 응답 Diff, 6개 수동 분석기, React Flow 분석 흐름, **승인형 SAFE URL Scanner**와 **실행 없는 Python/PHP Source-to-Sink 분석**이 실제 FastAPI 데이터로 동작합니다.
+요청·응답 정규화, 민감정보 마스킹, Scope 관리, 제한적 외부 요청, 응답 Diff, 6개 수동 분석기, React Flow 분석 흐름, **승인형 SAFE URL Scanner**, **실행 없는 Python/PHP/JavaScript Source-to-Sink 분석**, 정적·스캐너 findings를 묶는 **Findings Report**, 정적 후보를 런타임 증거와 상관시키는 **Hybrid verification**이 실제 FastAPI 데이터로 동작합니다.
 
 > 기본값은 **Analysis Only**입니다. 외부 요청은 서버 설정, 프로젝트 Scope, 권한 확인, 워크스페이스 승인, 요청별 최종 확인을 모두 통과해야 합니다.
 
@@ -179,12 +179,14 @@ CTF 액티브 플러그인은 실제 탐지 페이로드를 보냅니다: SQL �
 - SQL 오류·boolean, inert XSS reflection, open redirect, CORS SAFE 플러그인
 - 안전한 단일/다중 소스 및 ZIP 업로드, UUID 기반 아티팩트 저장
 - 언어·프레임워크·dependency manifest 탐지와 파일 인벤토리
-- Python AST 기반 Flask/FastAPI 스타일 Route와 request parameter 추출
-- Python AST 기반 Flask Source/Sink taint 추적과 parameter binding·sanitizer 안전 판정
-- Plain PHP endpoint 및 superglobal→SQL/include/command/output 흐름 추적
+- Python AST 기반 Flask/FastAPI/Django Route와 request parameter 추출
+- Python AST 기반 Source/Sink taint 추적(모듈 내 최대 3단계 함수 호출·반환값 전파)과 parameter binding·sanitizer 안전 판정
+- Plain PHP superglobal→SQL/command/path/include/redirect/output 흐름 추적과 JavaScript/Express 어휘 기반 source-to-sink 분석
 - 후보별 Source/Sink Monaco 라인 강조, React Flow 데이터 흐름, remediation diff
 - 정적 후보·수동 확인 필요 상태, 근거·신뢰도·분석 한계의 명시적 구분
-- Plain PHP 파일 경로 endpoint 추정, 마스킹된 Monaco 코드 뷰어
+- 정적 findings와 스캐너 findings를 묶는 프로젝트 단위 Findings Report와 Markdown 내보내기
+- 정적 후보를 런타임 SAFE 스캐너 증거와 상관시키는 Hybrid verification(조회 시점 계산, 실행 경계 불변)
+- 옵트인 Compose 프로필로만 기동하는 격리 학습 Lab(SQLi·XSS·IDOR·Path Traversal·Command Injection)
 - 스캔 응답 크기 제한을 스트리밍 다운로드 단계에서 강제
 - SQLite 기본, PostgreSQL 선택 지원, Alembic migration
 - non-root/read-only Docker 런타임과 GitHub Actions
@@ -200,9 +202,10 @@ flowchart TD
     API --> HC[DNS-pinned HTTP Client]
     API --> AN[Passive Analysis Engine]
     API --> SC[PASSIVE / SAFE URL Scanner]
-    API --> SA[Inert Python / PHP Analysis]
+    API --> SA[Inert Python / PHP / JS Analysis]
     SC --> TP[Test Preview + Approval]
     API --> DF[Diff Engine]
+    API --> RP[Findings Report + Hybrid Verification]
     API --> AU[Audit Log]
     API --> DB[(SQLite / PostgreSQL)]
     SG --> RL[Rate + Concurrency + Budget]
@@ -211,10 +214,12 @@ flowchart TD
     TP --> RL
     SA --> AS[(Bounded Artifact Store)]
     SA --> TG[Source-to-Sink Graph]
+    SA --> RP
+    SC --> RP
     HC --> RG[Redirect Revalidation]
     RG --> RD[Response Limit + Redaction]
     RD --> DB
-    API -. future .-> LAB[Isolated Local Labs]
+    API --> LAB[Isolated Local Labs]
 ```
 
 ```mermaid
@@ -267,6 +272,11 @@ POST   /api/code-projects/{code_project_id}/analyze
 GET    /api/code-projects/{code_project_id}/analysis
 GET    /api/code-projects/{code_project_id}/findings
 GET    /api/code-projects/{code_project_id}/data-flows
+GET    /api/projects/{project_id}/report
+GET    /api/projects/{project_id}/report/markdown
+GET    /api/projects/{project_id}/report/hybrid
+GET    /api/projects/{project_id}/report/findings/{source}/{origin_id}
+GET    /api/labs
 GET    /api/audit-events
 ```
 
