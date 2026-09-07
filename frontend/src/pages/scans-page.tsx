@@ -132,9 +132,11 @@ type LabContext = {
   scopePort: number | null;
 };
 
+type ScanProfile = Extract<ScannerProfile, "passive" | "safe" | "ctf" | "local_lab">;
+
 type LabPrefill = {
   target: string;
-  profile: Extract<ScannerProfile, "passive" | "safe" | "ctf">;
+  profile: ScanProfile;
   expectedUse: string;
   context: LabContext;
 };
@@ -145,9 +147,11 @@ function parseLabPrefill(searchParams: URLSearchParams): LabPrefill | null {
   const target = searchParams.get("target");
   if (!labId || !target) return null;
   const profile = searchParams.get("profile");
+  const seededProfile: ScanProfile =
+    profile === "safe" || profile === "ctf" || profile === "local_lab" ? profile : "local_lab";
   return {
     target,
-    profile: profile === "safe" || profile === "ctf" ? profile : "ctf",
+    profile: seededProfile,
     expectedUse: `Isolated local lab exercise: ${labId}`,
     context: {
       labId,
@@ -172,9 +176,7 @@ export function ScansPage() {
   const [projectId, setProjectId] = useState("");
   const [workspaceId, setWorkspaceId] = useState("");
   const [target, setTarget] = useState(seeded?.target ?? "http://127.0.0.1:8001/");
-  const [profile, setProfile] = useState<Extract<ScannerProfile, "passive" | "safe" | "ctf">>(
-    seeded?.profile ?? "passive",
-  );
+  const [profile, setProfile] = useState<ScanProfile>(seeded?.profile ?? "passive");
   const [expectedUse, setExpectedUse] = useState(
     seeded?.expectedUse ?? "Authorized application inventory and safe validation",
   );
@@ -199,6 +201,7 @@ export function ScansPage() {
 
   const overview = useQuery(dashboardQueryOptions());
   const ctfModeEnabled = overview.data?.safety.ctf_mode_enabled ?? false;
+  const localLabModeEnabled = overview.data?.safety.local_lab_mode_enabled ?? false;
   const projects = useQuery({
     queryKey: ["projects"],
     queryFn: ({ signal }) => getProjects(signal),
@@ -309,7 +312,9 @@ export function ScansPage() {
           ? "SAFE scan queued"
           : job.profile === "ctf"
             ? "CTF scan queued"
-            : "Passive scan queued",
+            : job.profile === "local_lab"
+              ? "Local lab scan queued"
+              : "Passive scan queued",
       );
     },
     onError: (error: Error) => toast.error(error.message),
@@ -338,7 +343,7 @@ export function ScansPage() {
   const selectedWorkspace = enabledWorkspaces.find(
     (workspace) => workspace.id === effectiveWorkspaceId,
   );
-  const usesActiveTests = profile === "safe" || profile === "ctf";
+  const usesActiveTests = profile === "safe" || profile === "ctf" || profile === "local_lab";
   const requestCeiling = Math.min(
     maxRequests + (usesActiveTests ? maxActiveTests : 0),
     selectedWorkspace
@@ -385,7 +390,9 @@ export function ScansPage() {
           ? "START SAFE SCAN"
           : profile === "ctf"
             ? "START CTF SCAN"
-            : "START PASSIVE SCAN",
+            : profile === "local_lab"
+              ? "START LOCAL LAB SCAN"
+              : "START PASSIVE SCAN",
       expected_use: expectedUse.trim(),
     });
   };
@@ -434,13 +441,14 @@ export function ScansPage() {
                   <select
                     aria-label="Scan profile"
                     value={profile}
-                    onChange={(event) =>
-                      setProfile(event.target.value as "passive" | "safe" | "ctf")
-                    }
+                    onChange={(event) => setProfile(event.target.value as ScanProfile)}
                     className={`${fieldClass} mt-1.5`}
                   >
                     <option value="passive">PASSIVE · inventory only</option>
                     <option value="safe">SAFE · plan then approve tests</option>
+                    {(localLabModeEnabled || profile === "local_lab") && (
+                      <option value="local_lab">LOCAL LAB · auto-run probes on built-in labs</option>
+                    )}
                     {(ctfModeEnabled || profile === "ctf") && (
                       <option value="ctf">CTF · auto-run read-only probes</option>
                     )}
@@ -515,6 +523,13 @@ export function ScansPage() {
                         this backend. Set WEBHACKING_CTF_MODE_ENABLED=true to auto-run lab probes.
                       </p>
                     )}
+                    {profile === "local_lab" && !localLabModeEnabled && (
+                      <p className="flex items-start gap-2 text-xs leading-5 text-amber-200/80">
+                        <ShieldAlert className="mt-0.5 size-3.5 shrink-0" /> Local lab probing is
+                        disabled on this backend. Set WEBHACKING_LOCAL_LAB_MODE_ENABLED=true to
+                        auto-run probes against the built-in labs.
+                      </p>
+                    )}
                   </div>
                 )}
                 <label className="block text-xs text-slate-400">
@@ -551,6 +566,7 @@ export function ScansPage() {
                     <li>Redirect target fully revalidated before use</li>
                     {profile === "safe" && <li>{maxActiveTests} low-risk tests maximum; none run before separate approval</li>}
                     {profile === "ctf" && <li>{maxActiveTests} read-only probes maximum; auto-approved and run unattended on the authorized target</li>}
+                    {profile === "local_lab" && <li>{maxActiveTests} read-only probes maximum; auto-approved and run unattended against the built-in lab only</li>}
                   </ul>
                 </div>
                 <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-line p-3 text-xs leading-5 text-slate-400">
