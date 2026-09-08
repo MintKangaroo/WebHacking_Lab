@@ -51,6 +51,36 @@ def test_command_injection_via_child_process_method() -> None:
     assert finding.sink_label == "exec"
 
 
+def test_nosql_injection_from_raw_request_object() -> None:
+    source = "app.get('/u', (req, res) => { User.find(req.query); });\n"
+    finding = _analyze(source)[VulnerabilityCategory.NOSQL_INJECTION]
+    assert finding.status == StaticFindingStatus.STATIC_CANDIDATE
+    assert finding.severity == Severity.HIGH
+    assert finding.sink_label == "find"
+    # The whole request object is the filter, so there is no single parameter.
+    assert finding.parameter is None
+
+
+def test_nosql_injection_through_a_variable_binding() -> None:
+    source = "app.post('/u', (req, res) => {\n  const q = req.body;\n  User.deleteMany(q);\n});\n"
+    finding = _analyze(source)[VulnerabilityCategory.NOSQL_INJECTION]
+    assert finding.sink_label == "deleteMany"
+
+
+def test_array_find_callback_is_not_nosql_injection() -> None:
+    # Array.find with a predicate is not a database query; the tainted value is a typed
+    # field read (req.query.id), so the parameter-less NoSQL guard excludes it.
+    source = "app.get('/u', (req, res) => { users.find((u) => u.id === req.query.id); });\n"
+    findings, _safe = analyze_javascript_taint(source, "app.js", [])
+    assert VulnerabilityCategory.NOSQL_INJECTION not in {finding.category for finding in findings}
+
+
+def test_typed_field_read_is_not_nosql_injection() -> None:
+    source = "app.get('/u', (req, res) => { User.findOne(req.query.id); });\n"
+    findings, _safe = analyze_javascript_taint(source, "app.js", [])
+    assert VulnerabilityCategory.NOSQL_INJECTION not in {finding.category for finding in findings}
+
+
 def test_command_injection_via_function_constructor() -> None:
     source = (
         "app.post('/run', (req, res) => {\n"
