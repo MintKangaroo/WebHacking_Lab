@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from webhacking_lab.domain.enums import (
+    ACTIVE_TEST_PROFILES,
     ActiveTestStatus,
     RiskLevel,
     ScannerProfile,
@@ -69,16 +70,16 @@ class ScanJobCreate(ScannerModel):
             ScannerProfile.PASSIVE: "START PASSIVE SCAN",
             ScannerProfile.SAFE: "START SAFE SCAN",
             ScannerProfile.CTF: "START CTF SCAN",
+            ScannerProfile.LOCAL_LAB: "START LOCAL LAB SCAN",
         }.get(self.profile)
         if phrase is not None and self.confirmation_phrase != phrase:
             raise ValueError(f"confirmation_phrase must be {phrase!r}")
         if self.profile == ScannerProfile.PASSIVE and self.active_test_policy.enabled:
             raise ValueError("Passive scans cannot enable active tests")
-        if (
-            self.profile in {ScannerProfile.SAFE, ScannerProfile.CTF}
-            and not self.active_test_policy.enabled
-        ):
-            raise ValueError("SAFE and CTF scans require active_test_policy.enabled=true")
+        if self.profile in ACTIVE_TEST_PROFILES and not self.active_test_policy.enabled:
+            raise ValueError(
+                "SAFE, CTF, and LOCAL_LAB scans require active_test_policy.enabled=true"
+            )
         return self
 
 

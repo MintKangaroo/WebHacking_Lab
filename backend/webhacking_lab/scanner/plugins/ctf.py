@@ -24,7 +24,9 @@ from webhacking_lab.http_client.models import NameValue, NormalizedResponse
 from webhacking_lab.scanner.models import ActiveEndpoint, HttpExchange, ScanContext
 from webhacking_lab.scanner.plugins.helpers import result
 
-CTF_PROFILES = frozenset({ScannerProfile.CTF})
+# The CTF detection plugins are shared with the LOCAL_LAB profile, which runs the same
+# read-only probes against the built-in isolated labs.
+CTF_PROFILES = frozenset({ScannerProfile.CTF, ScannerProfile.LOCAL_LAB})
 
 XSS_MARKER = "WHL_CTF_XSS_9K2Z"
 XSS_PAYLOAD = f'"><script>{XSS_MARKER}</script>'

@@ -8,6 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from webhacking_lab.api.schemas.reports import (
+    HybridCorrelation,
+    HybridReport,
+    HybridRuntimeSignal,
     ProjectReport,
     ReportFinding,
     ReportFindingDetail,
@@ -19,11 +22,23 @@ from webhacking_lab.database.models import (
     CodeProject,
     ScanFinding,
     ScanJob,
+    ScanTestCase,
     StaticFindingRecord,
+    StaticRouteRecord,
 )
 from webhacking_lab.database.repositories.projects import ProjectRepository
-from webhacking_lab.domain.enums import Severity, VerificationStatus
+from webhacking_lab.domain.enums import (
+    ActiveTestStatus,
+    Severity,
+    VerificationStatus,
+)
 from webhacking_lab.domain.exceptions import EntityNotFoundError
+from webhacking_lab.services.hybrid import (
+    CorrelationResult,
+    RuntimeSignal,
+    StaticCandidate,
+    correlate,
+)
 
 # Highest impact first; unknown severities sort last but stay grouped.
 _SEVERITY_RANK = {
@@ -55,9 +70,10 @@ class ReportService:
         project = await self._projects.get(project_id)
         if project is None:
             raise EntityNotFoundError("Project was not found")
+        correlation = await self._correlate(project_id)
         findings = [
-            *await self._static_findings(project_id),
-            *await self._scanner_findings(project_id),
+            *await self._static_findings(project_id, correlation),
+            *await self._scanner_findings(project_id, correlation),
         ]
         findings.sort(key=_finding_rank)
         return ProjectReport(
@@ -67,6 +83,141 @@ class ReportService:
             summary=_summarize(findings),
             findings=findings,
         )
+
+    async def hybrid(self, project_id: UUID) -> HybridReport:
+        project = await self._projects.get(project_id)
+        if project is None:
+            raise EntityNotFoundError("Project was not found")
+        candidates = await self._static_candidates(project_id)
+        signals = await self._runtime_signals(project_id)
+        result = correlate(candidates, signals)
+        correlations = [
+            HybridCorrelation(
+                category=item.static.category,
+                severity=item.static.severity,
+                verification=item.verification,
+                note=item.note,
+                static_origin_id=item.static.origin_id,
+                static_title=item.static.title,
+                static_location=item.static.location,
+                parameter=item.static.parameter,
+                runtime=[
+                    HybridRuntimeSignal(
+                        origin_id=signal.origin_id,
+                        kind=signal.kind,
+                        endpoint_url=signal.endpoint_url,
+                        parameter=signal.parameter,
+                        verification=signal.verification,
+                        confidence=signal.confidence,
+                        title=signal.title,
+                        evidence=signal.evidence,
+                    )
+                    for signal in item.runtime
+                ],
+            )
+            for item in result.correlations
+        ]
+        correlations.sort(key=lambda item: _SEVERITY_RANK.get(item.severity, len(_SEVERITY_RANK)))
+        by_verification = Counter(item.verification for item in correlations)
+        return HybridReport(
+            project_id=project_id,
+            project_name=project.name,
+            generated_at=datetime.now(UTC),
+            total_static=len(candidates),
+            correlated=len(correlations),
+            by_verification=dict(by_verification),
+            correlations=correlations,
+        )
+
+    async def _correlate(self, project_id: UUID) -> CorrelationResult:
+        candidates = await self._static_candidates(project_id)
+        signals = await self._runtime_signals(project_id)
+        return correlate(candidates, signals)
+
+    async def _static_candidates(self, project_id: UUID) -> list[StaticCandidate]:
+        rows = await self._session.execute(
+            select(StaticFindingRecord, CodeFile.relative_path, StaticRouteRecord.path)
+            .join(CodeProject, StaticFindingRecord.code_project_id == CodeProject.id)
+            .join(CodeFile, StaticFindingRecord.code_file_id == CodeFile.id)
+            .outerjoin(
+                StaticRouteRecord,
+                StaticFindingRecord.static_route_id == StaticRouteRecord.id,
+            )
+            .where(CodeProject.project_id == project_id)
+        )
+        return [
+            StaticCandidate(
+                origin_id=record.id,
+                category=record.category,
+                parameter=record.parameter,
+                path=route_path,
+                title=record.title,
+                severity=record.severity,
+                location=f"{path}:{record.sink_line}",
+            )
+            for record, path, route_path in rows.all()
+        ]
+
+    async def _runtime_signals(self, project_id: UUID) -> list[RuntimeSignal]:
+        # Active SAFE tests that actually ran carry the richest evidence (parameter and
+        # an explicit attempted state), so they are the primary runtime source.
+        test_rows = (
+            await self._session.scalars(
+                select(ScanTestCase)
+                .join(ScanJob, ScanTestCase.scan_id == ScanJob.id)
+                .where(
+                    ScanJob.project_id == project_id,
+                    ScanTestCase.status.in_(
+                        [ActiveTestStatus.COMPLETED, ActiveTestStatus.INCONCLUSIVE]
+                    ),
+                )
+            )
+        ).all()
+        signals: list[RuntimeSignal] = [
+            RuntimeSignal(
+                origin_id=test.id,
+                kind="active_test",
+                category=test.category,
+                endpoint_url=test.endpoint_url,
+                parameter=test.parameter,
+                verification=test.result_status or VerificationStatus.NOT_TESTED.value,
+                confidence=test.confidence,
+                title=test.title,
+                evidence=[_flatten_evidence(item) for item in test.evidence_json],
+                attempted=True,
+            )
+            for test in test_rows
+        ]
+        # Passive findings supplement the active tests. A finding produced by an active
+        # test is already represented above, so skip any whose (endpoint, category) an
+        # active test already covers to avoid double-counting the same observation.
+        covered = {(test.endpoint_url, test.category) for test in test_rows}
+        finding_rows = (
+            await self._session.scalars(
+                select(ScanFinding)
+                .join(ScanJob, ScanFinding.scan_id == ScanJob.id)
+                .where(
+                    ScanJob.project_id == project_id,
+                    ScanFinding.status != VerificationStatus.NOT_TESTED.value,
+                )
+            )
+        ).all()
+        signals.extend(
+            RuntimeSignal(
+                origin_id=finding.id,
+                kind="passive_finding",
+                category=finding.category,
+                endpoint_url=finding.endpoint_url,
+                parameter=None,
+                verification=finding.status,
+                confidence=finding.confidence,
+                title=finding.title,
+                evidence=[_flatten_evidence(item) for item in finding.evidence_json],
+            )
+            for finding in finding_rows
+            if (finding.endpoint_url, finding.category) not in covered
+        )
+        return signals
 
     async def finding_detail(
         self, project_id: UUID, source: str, origin_id: UUID
@@ -160,29 +311,40 @@ class ReportService:
             limitations=list(record.limitations_json),
         )
 
-    async def _static_findings(self, project_id: UUID) -> list[ReportFinding]:
+    async def _static_findings(
+        self, project_id: UUID, correlation: CorrelationResult
+    ) -> list[ReportFinding]:
         rows = await self._session.execute(
             select(StaticFindingRecord, CodeFile.relative_path)
             .join(CodeProject, StaticFindingRecord.code_project_id == CodeProject.id)
             .join(CodeFile, StaticFindingRecord.code_file_id == CodeFile.id)
             .where(CodeProject.project_id == project_id)
         )
-        return [
-            ReportFinding(
-                source="static",
-                origin_id=record.id,
-                category=record.category,
-                title=record.title,
-                severity=record.severity,
-                status=record.status,
-                confidence=record.confidence,
-                location=f"{path}:{record.sink_line}",
-                detail=f"{record.source_label} \u2192 {record.sink_label}",
+        findings = []
+        for record, path in rows.all():
+            verification, count = correlation.static_verification.get(
+                record.id, (VerificationStatus.NOT_TESTED.value, 0)
             )
-            for record, path in rows.all()
-        ]
+            findings.append(
+                ReportFinding(
+                    source="static",
+                    origin_id=record.id,
+                    category=record.category,
+                    title=record.title,
+                    severity=record.severity,
+                    status=record.status,
+                    confidence=record.confidence,
+                    location=f"{path}:{record.sink_line}",
+                    detail=f"{record.source_label} \u2192 {record.sink_label}",
+                    verification=verification,
+                    correlation_count=count,
+                )
+            )
+        return findings
 
-    async def _scanner_findings(self, project_id: UUID) -> list[ReportFinding]:
+    async def _scanner_findings(
+        self, project_id: UUID, correlation: CorrelationResult
+    ) -> list[ReportFinding]:
         records = await self._session.scalars(
             select(ScanFinding)
             .join(ScanJob, ScanFinding.scan_id == ScanJob.id)
@@ -202,6 +364,8 @@ class ReportService:
                 confidence=record.confidence,
                 location=record.endpoint_url,
                 detail=record.summary,
+                verification=record.status,
+                correlation_count=len(correlation.scanner_root_cause.get(record.id, [])),
             )
             for record in records
         ]
@@ -243,8 +407,8 @@ def render_report_markdown(report: ProjectReport) -> str:
         return "\n".join(lines) + "\n"
     lines.extend(
         [
-            "| Severity | Source | Category | Title | Location | Status |",
-            "| --- | --- | --- | --- | --- | --- |",
+            "| Severity | Source | Category | Title | Location | Status | Verification |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
     lines.extend(_finding_row(finding) for finding in report.findings)
@@ -252,10 +416,13 @@ def render_report_markdown(report: ProjectReport) -> str:
 
 
 def _finding_row(finding: ReportFinding) -> str:
+    verification = finding.verification
+    if finding.correlation_count:
+        verification = f"{verification} (x{finding.correlation_count})"
     return (
         f"| {finding.severity} | {finding.source} | {finding.category} "
         f"| {_escape_cell(finding.title)} | {_escape_cell(finding.location)} "
-        f"| {finding.status} |"
+        f"| {finding.status} | {verification} |"
     )
 
 

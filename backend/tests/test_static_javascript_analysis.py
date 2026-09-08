@@ -81,6 +81,49 @@ def test_typed_field_read_is_not_nosql_injection() -> None:
     assert VulnerabilityCategory.NOSQL_INJECTION not in {finding.category for finding in findings}
 
 
+def test_command_injection_via_function_constructor() -> None:
+    source = (
+        "app.post('/run', (req, res) => {\n"
+        "  const fn = new Function('return ' + req.body.code);\n"
+        "  res.json(fn());\n"
+        "});\n"
+    )
+    finding = _analyze(source)[VulnerabilityCategory.COMMAND_INJECTION]
+    assert finding.parameter == "code"
+    assert finding.sink_label == "Function"
+    assert finding.severity == Severity.HIGH
+
+
+def test_ssti_via_template_engine_compile() -> None:
+    source = (
+        "app.get('/t', (req, res) => {\n"
+        "  const tpl = handlebars.compile(req.query.tpl);\n"
+        "  res.send(tpl({}));\n"
+        "});\n"
+    )
+    finding = _analyze(source)[VulnerabilityCategory.SERVER_SIDE_TEMPLATE_INJECTION]
+    assert finding.status == StaticFindingStatus.STATIC_CANDIDATE
+    assert finding.severity == Severity.HIGH
+    assert finding.parameter == "tpl"
+    assert finding.sink_label == "compile"
+
+
+def test_ssti_via_request_controlled_template_name() -> None:
+    source = "app.get('/v', (req, res) => { res.render(req.params.view); });\n"
+    finding = _analyze(source)[VulnerabilityCategory.SERVER_SIDE_TEMPLATE_INJECTION]
+    assert finding.parameter == "view"
+    assert finding.sink_label == "render"
+
+
+def test_render_with_constant_template_and_tainted_data_is_safe() -> None:
+    # The data object is escaped by the engine; only a tainted template is a finding.
+    source = "app.get('/v', (req, res) => { res.render('profile', { name: req.query.name }); });\n"
+    findings, _safe = analyze_javascript_taint(source, "app.js", [])
+    assert VulnerabilityCategory.SERVER_SIDE_TEMPLATE_INJECTION not in {
+        finding.category for finding in findings
+    }
+
+
 def test_path_traversal_via_fs_read() -> None:
     source = "app.get('/d', (req, res) => { fs.readFileSync(req.query.file); });\n"
     finding = _analyze(source)[VulnerabilityCategory.PATH_TRAVERSAL]

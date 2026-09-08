@@ -3,7 +3,7 @@
 import re
 
 from webhacking_lab.analyzers.models import TestCase
-from webhacking_lab.domain.enums import ScannerProfile
+from webhacking_lab.domain.enums import UNATTENDED_PROFILES, ScannerProfile
 from webhacking_lab.domain.exceptions import ExecutionPolicyError
 from webhacking_lab.http_client.models import NameValue, NormalizedRequest
 
@@ -126,6 +126,6 @@ def build_test_request(
 ) -> NormalizedRequest:
     """Route to the profile-specific mutation builder behind one shared entry point."""
 
-    if profile == ScannerProfile.CTF:
+    if profile in UNATTENDED_PROFILES:
         return build_ctf_test_request(baseline, test_case)
     return build_safe_test_request(baseline, test_case)

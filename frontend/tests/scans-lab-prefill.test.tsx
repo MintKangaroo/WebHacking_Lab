@@ -12,6 +12,7 @@ const overview = {
     mode: "Controlled Execution",
     network_execution_enabled: true,
     ctf_mode_enabled: true,
+    local_lab_mode_enabled: true,
     insecure_tls_allowed: false,
     max_response_bytes: 2_000_000,
     global_requests_per_minute: 30,
@@ -77,7 +78,7 @@ describe("Scan plan lab pre-fill", () => {
     window.history.pushState(
       {},
       "",
-      "/scans?labId=sqli&profile=ctf&scopeScheme=http&scopeHost=lab-sqli&scopePort=5000&target=" +
+      "/scans?labId=sqli&profile=local_lab&scopeScheme=http&scopeHost=lab-sqli&scopePort=5000&target=" +
         encodeURIComponent("http://lab-sqli:5000/products?id=1"),
     );
 
