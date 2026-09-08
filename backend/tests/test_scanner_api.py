@@ -204,7 +204,9 @@ def _wait_for_terminal(client: TestClient, scan_id: str) -> dict[str, object]:
 
 
 @contextmanager
-def scanner_client(*, ctf_mode: bool = False) -> Iterator[tuple[TestClient, ScannerSender]]:
+def scanner_client(
+    *, ctf_mode: bool = False, local_lab_mode: bool = False
+) -> Iterator[tuple[TestClient, ScannerSender]]:
     with TemporaryDirectory(prefix="webhacking-scanner-test-") as directory:
         settings = Settings(
             environment="test",
@@ -212,6 +214,7 @@ def scanner_client(*, ctf_mode: bool = False) -> Iterator[tuple[TestClient, Scan
             analysis_only=False,
             network_execution_enabled=True,
             ctf_mode_enabled=ctf_mode,
+            local_lab_mode_enabled=local_lab_mode,
             global_requests_per_minute=120,
         )
         sender = ScannerSender()
@@ -270,14 +273,19 @@ def test_scanner_rejects_out_of_scope_and_unsupported_profiles() -> None:
         )
         assert blocked.status_code == 403
         assert blocked.json()["code"] == "execution_blocked"
-        active_payload = _scan_payload(
+        # LOCAL_LAB is implemented but gated behind its own opt-in server flag, which is
+        # off in this fixture, so a well-formed LOCAL_LAB request is still refused.
+        local_lab_payload = _scan_payload(
             project_id,
             workspace_id,
-            "https://authorized.example/",
+            "http://lab-sqli:5000/products?id=1",
         )
-        active_payload["profile"] = "local_lab"
-        active = client.post("/api/scans", json=active_payload)
-        assert active.status_code == 403
+        local_lab_payload["profile"] = "local_lab"
+        local_lab_payload["confirmation_phrase"] = "START LOCAL LAB SCAN"
+        local_lab_payload["active_test_policy"] = {"enabled": True, "max_tests": 3}
+        blocked_local_lab = client.post("/api/scans", json=local_lab_payload)
+        assert blocked_local_lab.status_code == 403
+        assert blocked_local_lab.json()["code"] == "execution_blocked"
         assert sender.calls == []
 
 
@@ -451,6 +459,91 @@ def test_ctf_scan_requires_ctf_mode_enabled() -> None:
             }
         )
         blocked = client.post("/api/scans", json=payload)
+        assert blocked.status_code == 403
+        assert blocked.json()["code"] == "execution_blocked"
+        assert sender.calls == []
+
+
+def _local_lab_payload(project_id: str, workspace_id: str, target: str) -> dict[str, object]:
+    payload = _scan_payload(project_id, workspace_id, target)
+    payload.update(
+        {
+            "profile": "local_lab",
+            "confirmation_phrase": "START LOCAL LAB SCAN",
+            "active_test_policy": {
+                "enabled": True,
+                "max_tests": 6,
+                "max_tests_per_parameter": 6,
+                "allow_limited_timing": False,
+            },
+        }
+    )
+    return payload
+
+
+def test_local_lab_scan_runs_probes_unattended_against_catalog_lab() -> None:
+    with scanner_client(local_lab_mode=True) as (client, sender):
+        project_id, workspace_id = _prepare_target(client)
+        # The lab host is not in project scope; LOCAL_LAB auto-registers it because it
+        # matches a built-in lab from the catalog. No CTF "scan anything" flag is needed.
+        payload = _local_lab_payload(
+            project_id,
+            workspace_id,
+            "http://lab-sqli:5000/products?id=1",
+        )
+        created = client.post(
+            "/api/scans",
+            json=payload,
+            headers={"X-Correlation-ID": "local-lab-scan-test"},
+        )
+        assert created.status_code == 202, created.text
+        scan_id = created.json()["id"]
+
+        terminal = _wait_for_terminal(client, scan_id)
+        assert terminal["status"] == "completed", terminal
+        assert terminal["requests_used"] >= 2
+        assert sender.calls, "LOCAL_LAB probes were never sent"
+
+        tests = client.get(f"/api/scans/{scan_id}/tests").json()
+        assert tests, "LOCAL_LAB plan produced no probes"
+        assert {item["plugin_id"] for item in tests} <= {
+            "ctf-sql-injection",
+            "ctf-reflected-xss",
+            "ctf-path-traversal",
+            "ctf-open-redirect",
+        }
+        assert all(item["status"] in {"completed", "blocked"} for item in tests)
+        assert all(item["approved_at"] is not None for item in tests)
+
+        findings = client.get(f"/api/scans/{scan_id}/findings").json()
+        assert "ctf-sql-injection" in {item["analyzer"] for item in findings}
+
+        # The lab host was registered as an authorized scope rule for the project.
+        scope = client.get(f"/api/projects/{project_id}/scope").json()
+        assert "lab-sqli" in {rule["hostname"] for rule in scope}
+
+
+def test_local_lab_requires_local_lab_mode_enabled() -> None:
+    with scanner_client(local_lab_mode=False) as (client, sender):
+        project_id, workspace_id = _prepare_target(client)
+        blocked = client.post(
+            "/api/scans",
+            json=_local_lab_payload(project_id, workspace_id, "http://lab-sqli:5000/products?id=1"),
+        )
+        assert blocked.status_code == 403
+        assert blocked.json()["code"] == "execution_blocked"
+        assert sender.calls == []
+
+
+def test_local_lab_rejects_targets_outside_the_catalog() -> None:
+    with scanner_client(local_lab_mode=True) as (client, sender):
+        project_id, workspace_id = _prepare_target(client)
+        # A real, authorized host that is not a built-in lab must still be refused: the
+        # LOCAL_LAB relaxation is scoped strictly to the shipped labs.
+        blocked = client.post(
+            "/api/scans",
+            json=_local_lab_payload(project_id, workspace_id, "https://authorized.example/?id=1"),
+        )
         assert blocked.status_code == 403
         assert blocked.json()["code"] == "execution_blocked"
         assert sender.calls == []

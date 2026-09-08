@@ -30,6 +30,8 @@ from webhacking_lab.database.repositories.audit import AuditRepository
 from webhacking_lab.database.repositories.scans import ScanRepository
 from webhacking_lab.database.session import Database
 from webhacking_lab.domain.enums import (
+    ACTIVE_TEST_PROFILES,
+    UNATTENDED_PROFILES,
     ActiveTestStatus,
     AuditEventType,
     ScannerProfile,
@@ -228,7 +230,7 @@ class PassiveScanEngine:
                 0.74,
                 correlation_id,
             )
-            if job.profile in {ScannerProfile.SAFE, ScannerProfile.CTF}:
+            if job.profile in ACTIVE_TEST_PROFILES:
                 await self._stage(
                     job,
                     ScanStatus.PLANNING_ACTIVE_TESTS,
@@ -238,17 +240,17 @@ class PassiveScanEngine:
                 )
                 planned = await self._plan_active_tests(job, correlation_id)
                 if planned:
-                    if job.profile == ScannerProfile.CTF:
-                        # CTF opted into unattended execution: auto-approve the exact
-                        # previews so the active engine can run them without a manual
-                        # approval step. Every probe is still a single read-only GET.
+                    if job.profile in UNATTENDED_PROFILES:
+                        # CTF and LOCAL_LAB opted into unattended execution: auto-approve
+                        # the exact previews so the active engine can run them without a
+                        # manual approval step. Every probe is still a single read-only GET.
                         await self._approve_ctf_tests(job, correlation_id)
                         job.status = ScanStatus.ACTIVE_TESTING
                         job.current_stage = "Active Testing"
                         job.progress = 0.82
                         await self._event(
                             job,
-                            "CTF probes were auto-approved for unattended execution.",
+                            "Read-only probes were auto-approved for unattended execution.",
                             details={"planned_tests": planned},
                         )
                         await self._session.commit()

@@ -1,8 +1,17 @@
 import { apiGet, apiGetText } from "./client";
-import type { ProjectReport, ReportFindingDetail, ReportSource } from "../types/resources";
+import type {
+  HybridReport,
+  ProjectReport,
+  ReportFindingDetail,
+  ReportSource,
+} from "../types/resources";
 
 export function getProjectReport(projectId: string, signal?: AbortSignal) {
   return apiGet<ProjectReport>(`/projects/${projectId}/report`, signal);
+}
+
+export function getProjectHybridReport(projectId: string, signal?: AbortSignal) {
+  return apiGet<HybridReport>(`/projects/${projectId}/report/hybrid`, signal);
 }
 
 export function getProjectReportMarkdown(projectId: string, signal?: AbortSignal) {

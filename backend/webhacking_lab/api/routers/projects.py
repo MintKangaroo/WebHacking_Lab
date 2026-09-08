@@ -12,7 +12,11 @@ from webhacking_lab.api.dependencies import (
     get_dns_resolver,
     get_request_settings,
 )
-from webhacking_lab.api.schemas.reports import ProjectReport, ReportFindingDetail
+from webhacking_lab.api.schemas.reports import (
+    HybridReport,
+    ProjectReport,
+    ReportFindingDetail,
+)
 from webhacking_lab.api.schemas.resources import (
     ProjectCreate,
     ProjectDetail,
@@ -83,6 +87,15 @@ async def get_project_report(project_id: UUID, session: Session) -> ProjectRepor
 async def get_project_report_markdown(project_id: UUID, session: Session) -> PlainTextResponse:
     report = await ReportService(session).build(project_id)
     return PlainTextResponse(render_report_markdown(report), media_type="text/markdown")
+
+
+@router.get(
+    "/projects/{project_id}/report/hybrid",
+    response_model=HybridReport,
+    summary="Static candidates correlated with runtime scanner evidence",
+)
+async def get_project_hybrid_report(project_id: UUID, session: Session) -> HybridReport:
+    return await ReportService(session).hybrid(project_id)
 
 
 @router.get(
