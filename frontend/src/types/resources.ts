@@ -600,3 +600,35 @@ export type LabCatalog = {
   warning: string;
   labs: LabInfo[];
 };
+
+export type CtfChallengeStatus = "todo" | "in_progress" | "solved";
+
+export type CtfChallenge = {
+  id: string;
+  name: string;
+  event: string;
+  category: string;
+  difficulty: string;
+  points: number | null;
+  target_url: string;
+  status: CtfChallengeStatus;
+  notes: string;
+  flag: string;
+  solved_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CtfChallengeCreate = {
+  name: string;
+  event?: string;
+  category?: string;
+  difficulty?: string;
+  points?: number | null;
+  target_url?: string;
+  status?: CtfChallengeStatus;
+  notes?: string;
+  flag?: string;
+};
+
+export type CtfChallengePatch = Partial<CtfChallengeCreate>;
