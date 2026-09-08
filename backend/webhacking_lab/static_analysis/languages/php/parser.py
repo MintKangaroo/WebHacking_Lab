@@ -476,8 +476,7 @@ def analyze_php_taint(
                 status=status,
                 severity=(
                     Severity.MEDIUM
-                    if category
-                    in {VulnerabilityCategory.XSS, VulnerabilityCategory.OPEN_REDIRECT}
+                    if category in {VulnerabilityCategory.XSS, VulnerabilityCategory.OPEN_REDIRECT}
                     else Severity.HIGH
                 ),
                 confidence=0.6 if value.sanitizers else 0.88,

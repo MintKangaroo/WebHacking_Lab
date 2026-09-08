@@ -365,9 +365,7 @@ def _simulate_returns(
             continue
         if isinstance(statement, (ast.Assign, ast.AnnAssign)) and statement.value is not None:
             value = _trace(statement.value, environment, context)
-            targets = (
-                statement.targets if isinstance(statement, ast.Assign) else [statement.target]
-            )
+            targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
             _bind_targets(environment, targets, value, statement.lineno)
         elif isinstance(statement, ast.Return) and statement.value is not None:
             returns.append(_trace(statement.value, environment, context))

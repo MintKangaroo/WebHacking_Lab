@@ -302,8 +302,7 @@ class ScanService:
                 stage="Queued",
                 message={
                     ScannerProfile.SAFE: (
-                        "SAFE scan accepted; mutation requests require a second, "
-                        "per-test approval."
+                        "SAFE scan accepted; mutation requests require a second, per-test approval."
                     ),
                     ScannerProfile.CTF: (
                         "CTF scan accepted; bounded read-only probes will run unattended "
