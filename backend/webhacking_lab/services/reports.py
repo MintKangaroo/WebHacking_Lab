@@ -232,9 +232,7 @@ class ReportService:
             raise EntityNotFoundError("Finding was not found for this project")
         return detail
 
-    async def _static_detail(
-        self, project_id: UUID, origin_id: UUID
-    ) -> ReportFindingDetail | None:
+    async def _static_detail(self, project_id: UUID, origin_id: UUID) -> ReportFindingDetail | None:
         row = (
             await self._session.execute(
                 select(StaticFindingRecord, CodeFile.relative_path)
@@ -251,9 +249,7 @@ class ReportService:
         record, path = row
         remediation = record.remediation_json or {}
         guidance = [
-            line
-            for line in (remediation.get("summary"), *remediation.get("guidance", []))
-            if line
+            line for line in (remediation.get("summary"), *remediation.get("guidance", [])) if line
         ]
         if remediation.get("verification"):
             guidance.append(f"Verify: {remediation['verification']}")

@@ -138,9 +138,7 @@ async def test_ipv6_loopback_is_treated_like_ipv4_loopback() -> None:
 async def test_reserved_non_loopback_ipv6_answer_is_still_blocked() -> None:
     # The loopback exemption must not reopen the rest of the reserved space.
     rule = ScopeRuleSpec(scheme="http", hostname="lab.example")
-    decision = await ScopeGuard(FakeResolver(["100::1"])).check(
-        "http://lab.example/", [rule]
-    )
+    decision = await ScopeGuard(FakeResolver(["100::1"])).check("http://lab.example/", [rule])
     assert decision.allowed is False
     assert decision.code == "ip_policy_blocked"
 

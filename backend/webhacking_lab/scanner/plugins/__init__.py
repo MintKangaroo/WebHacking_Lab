@@ -30,9 +30,7 @@ CTF_ACTIVE_PLUGINS: tuple[ActiveScannerPlugin, ...] = (
     cast(ActiveScannerPlugin, CtfOpenRedirectPlugin()),
 )
 
-PLUGIN_BY_ID = {
-    plugin.plugin_id: plugin for plugin in (*SAFE_ACTIVE_PLUGINS, *CTF_ACTIVE_PLUGINS)
-}
+PLUGIN_BY_ID = {plugin.plugin_id: plugin for plugin in (*SAFE_ACTIVE_PLUGINS, *CTF_ACTIVE_PLUGINS)}
 
 __all__ = [
     "CTF_ACTIVE_PLUGINS",

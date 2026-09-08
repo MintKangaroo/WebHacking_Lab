@@ -59,9 +59,7 @@ def _shannon_entropy(value: str) -> float:
     counts: dict[str, int] = {}
     for char in value:
         counts[char] = counts.get(char, 0) + 1
-    return -sum(
-        (count / length) * math.log2(count / length) for count in counts.values()
-    )
+    return -sum((count / length) * math.log2(count / length) for count in counts.values())
 
 
 def _looks_like_secret(token: str) -> bool:

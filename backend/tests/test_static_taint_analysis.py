@@ -510,9 +510,7 @@ def handler():
     return Environment().from_string(tpl)
 """
     findings, _ = analyze_python_taint(source, "app.py", [_route("app.py")])
-    assert [f.category for f in findings] == [
-        VulnerabilityCategory.SERVER_SIDE_TEMPLATE_INJECTION
-    ]
+    assert [f.category for f in findings] == [VulnerabilityCategory.SERVER_SIDE_TEMPLATE_INJECTION]
 
 
 def test_python_shlex_quote_and_bleach_clean_are_strong_sanitizers() -> None:

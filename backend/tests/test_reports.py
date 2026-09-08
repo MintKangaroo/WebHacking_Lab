@@ -173,7 +173,7 @@ def test_project_report_endpoints_expose_static_findings(client: TestClient) -> 
     assert created.status_code == 201
     code_project_id = created.json()["id"]
     source = (
-        b'from flask import request\n\n'
+        b"from flask import request\n\n"
         b'@app.route("/item")\n'
         b"def handler():\n"
         b'    item = request.args["id"]\n'
@@ -208,9 +208,7 @@ def test_project_report_endpoints_expose_static_findings(client: TestClient) -> 
     assert detail_payload["source"] == "static"
     assert len(detail_payload["flow_steps"]) >= 1
     assert detail_payload["remediation"]
-    missing = client.get(
-        f"/api/projects/{project_id}/report/findings/static/{uuid4()}"
-    )
+    missing = client.get(f"/api/projects/{project_id}/report/findings/static/{uuid4()}")
     assert missing.status_code == 404
 
 
