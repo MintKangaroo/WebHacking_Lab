@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "../src/app";
 import type {
+  HybridReport,
   ProjectReport,
   ProjectSummary,
   ReportFindingDetail,
@@ -45,6 +46,8 @@ const report: ProjectReport = {
       confidence: 0.9,
       location: "http://lab.test/login",
       detail: "No Strict-Transport-Security header.",
+      verification: "confirmed",
+      correlation_count: 0,
     },
     {
       source: "static",
@@ -56,8 +59,51 @@ const report: ProjectReport = {
       confidence: 0.9,
       location: "app.py:5",
       detail: "request.args['id'] → cursor.execute",
+      verification: "confirmed",
+      correlation_count: 1,
     },
   ],
+};
+
+const hybridReport: HybridReport = {
+  project_id: projectId,
+  project_name: "Report Target",
+  generated_at: "2026-08-18T00:00:00Z",
+  total_static: 1,
+  correlated: 1,
+  by_verification: { confirmed: 1 },
+  correlations: [
+    {
+      category: "sql_injection",
+      severity: "high",
+      verification: "confirmed",
+      note: null,
+      static_origin_id: "22222222-2222-4222-8222-222222222222",
+      static_title: "Potential SQL Injection",
+      static_location: "app.py:5",
+      parameter: "q",
+      runtime: [
+        {
+          origin_id: "33333333-3333-4333-8333-333333333333",
+          kind: "active_test",
+          endpoint_url: "http://lab.test/search",
+          parameter: "q",
+          verification: "confirmed",
+          confidence: 0.95,
+          title: "SQL injection probe",
+          evidence: ["signal: boolean differential"],
+        },
+      ],
+    },
+  ],
+};
+
+const hybridEmpty: HybridReport = {
+  ...hybridReport,
+  total_static: 0,
+  correlated: 0,
+  by_verification: {},
+  correlations: [],
 };
 
 function response(payload: unknown, status = 200) {
@@ -105,6 +151,8 @@ describe("Findings report page", () => {
       const path = pathOf(input);
       if (path === "/api/projects") return Promise.resolve(response([project]));
       if (path === `/api/projects/${projectId}/report`) return Promise.resolve(response(report));
+      if (path === `/api/projects/${projectId}/report/hybrid`)
+        return Promise.resolve(response(hybridEmpty));
       return Promise.resolve(response({ message: "not found" }, 404));
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -128,6 +176,8 @@ describe("Findings report page", () => {
       const path = pathOf(input);
       if (path === "/api/projects") return Promise.resolve(response([project]));
       if (path === `/api/projects/${projectId}/report`) return Promise.resolve(response(report));
+      if (path === `/api/projects/${projectId}/report/hybrid`)
+        return Promise.resolve(response(hybridEmpty));
       if (
         path ===
         `/api/projects/${projectId}/report/findings/static/${staticDetail.origin_id}`
@@ -152,6 +202,8 @@ describe("Findings report page", () => {
       const path = pathOf(input);
       if (path === "/api/projects") return Promise.resolve(response([project]));
       if (path === `/api/projects/${projectId}/report`) return Promise.resolve(response(report));
+      if (path === `/api/projects/${projectId}/report/hybrid`)
+        return Promise.resolve(response(hybridEmpty));
       return Promise.resolve(response({ message: "not found" }, 404));
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -180,6 +232,8 @@ describe("Findings report page", () => {
       const path = pathOf(input);
       if (path === "/api/projects") return Promise.resolve(response([project]));
       if (path === `/api/projects/${projectId}/report`) return Promise.resolve(response(empty));
+      if (path === `/api/projects/${projectId}/report/hybrid`)
+        return Promise.resolve(response(hybridEmpty));
       return Promise.resolve(response({ message: "not found" }, 404));
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -189,5 +243,26 @@ describe("Findings report page", () => {
     expect(
       await screen.findByText(/No static or scanner findings were recorded/i),
     ).toBeInTheDocument();
+  });
+
+  it("shows hybrid correlations between static candidates and runtime evidence", async () => {
+    window.history.pushState({}, "", "/reports");
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = pathOf(input);
+      if (path === "/api/projects") return Promise.resolve(response([project]));
+      if (path === `/api/projects/${projectId}/report`) return Promise.resolve(response(report));
+      if (path === `/api/projects/${projectId}/report/hybrid`)
+        return Promise.resolve(response(hybridReport));
+      return Promise.resolve(response({ message: "not found" }, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    expect(await screen.findByText("Hybrid correlations")).toBeInTheDocument();
+    // The correlated runtime endpoint and its SAFE-test evidence appear in the panel.
+    expect(await screen.findByText("http://lab.test/search")).toBeInTheDocument();
+    expect(screen.getByText("SAFE test")).toBeInTheDocument();
+    expect(screen.getByText(/boolean differential/)).toBeInTheDocument();
   });
 });
