@@ -12,6 +12,7 @@ const overview: DashboardOverview = {
     mode: "Analysis Only",
     network_execution_enabled: false,
     ctf_mode_enabled: false,
+    local_lab_mode_enabled: false,
     insecure_tls_allowed: false,
     max_response_bytes: 2_097_152,
     global_requests_per_minute: 30,
@@ -79,6 +80,6 @@ describe("Dashboard local-labs widget", () => {
     const href = scanLink.getAttribute("href") ?? "";
     expect(href).toContain("/scans?");
     expect(href).toContain("labId=sqli");
-    expect(href).toContain("profile=ctf");
+    expect(href).toContain("profile=local_lab");
   });
 });

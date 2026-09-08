@@ -91,7 +91,7 @@ describe("Local labs page", () => {
     const link = await screen.findByRole("link", { name: /Scan this lab/i });
     const href = link.getAttribute("href") ?? "";
     expect(href).toContain("/scans?");
-    expect(href).toContain("profile=ctf");
+    expect(href).toContain("profile=local_lab");
     expect(href).toContain("labId=sqli");
     expect(decodeURIComponent(href)).toContain("http://lab-sqli:5000/products?id=1");
     expect(href).toContain("scopeHost=lab-sqli");
