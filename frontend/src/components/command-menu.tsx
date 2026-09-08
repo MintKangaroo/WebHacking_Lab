@@ -1,5 +1,6 @@
 import {
   Activity,
+  Binary,
   FileSearch,
   FolderKanban,
   Search,
@@ -22,6 +23,7 @@ const commands = [
   { label: "Import HTTP request", hint: "Phase 2", icon: TerminalSquare, available: true, path: "/repeater" },
   { label: "Start guarded URL scan", hint: "Phase 9", icon: Radar, available: true, path: "/scans" },
   { label: "Analyze uploaded code", hint: "Phase 11", icon: FileSearch, available: true, path: "/code-analysis" },
+  { label: "Encode or decode", hint: "Workbench", icon: Binary, available: true, path: "/encoding" },
   { label: "Review safety policy", hint: "Docs", icon: ShieldCheck, available: true },
   { label: "Open settings", hint: "Phase 7", icon: Settings, available: false },
 ];
