@@ -59,12 +59,18 @@ CATEGORY_NAMES = {
     VulnerabilityCategory.SQL_INJECTION: "SQL Injection",
     VulnerabilityCategory.XSS: "Cross-Site Scripting",
     VulnerabilityCategory.COMMAND_INJECTION: "Command Injection",
+    VulnerabilityCategory.SERVER_SIDE_TEMPLATE_INJECTION: "Server-Side Template Injection",
     VulnerabilityCategory.FILE_INCLUSION: "File Inclusion",
     VulnerabilityCategory.PATH_TRAVERSAL: "Path Traversal",
     VulnerabilityCategory.OPEN_REDIRECT: "Open Redirect",
 }
 MAX_FLOW_STEPS = 64
 _QUOTES = {"'", '"', "`"}
+
+# Template engines that compile or render their first argument as template source, plus
+# ``res.render`` whose first argument selects the template. A tainted first argument is a
+# server-side template injection (or template-path) vector; data arguments are not.
+_TEMPLATE_SINKS = ("render", "renderFile", "compile", "template")
 
 EXPRESS_ROUTE = re.compile(
     r"\b(app|router|[A-Za-z_$][\w$]*[Rr]outer)\s*\.\s*"
@@ -415,12 +421,16 @@ def _sink(statement: str) -> tuple[VulnerabilityCategory, str, str] | None:
         prefix = "res" if file_sink[0] in {"sendFile", "download"} else "fs"
         arg = _split_arguments(file_sink[1])[0]
         return VulnerabilityCategory.PATH_TRAVERSAL, f"{prefix}.{file_sink[0]}", arg
+    template = _method_call(statement, _TEMPLATE_SINKS)
+    if template is not None:
+        arg = _split_arguments(template[1])[0]
+        return VulnerabilityCategory.SERVER_SIDE_TEMPLATE_INJECTION, template[0], arg
     response = _method_call(statement, ("send", "write", "end"))
     if response is not None:
         arg = _split_arguments(response[1])[0]
         return VulnerabilityCategory.XSS, f"res.{response[0]}", arg
     command = _method_call(statement, ("exec", "execSync")) or _bare_call(
-        statement, ("exec", "execSync", "eval")
+        statement, ("exec", "execSync", "eval", "Function")
     )
     if command is not None:
         arg = _split_arguments(command[1])[0]
@@ -448,6 +458,16 @@ def _remediation(category: VulnerabilityCategory) -> StaticRemediation:
             ],
             safe_example='execFile("ping", ["-c", "1", host], (err, out) => {});',
             verification="Confirm request data cannot alter command syntax or the executable.",
+        )
+    if category == VulnerabilityCategory.SERVER_SIDE_TEMPLATE_INJECTION:
+        return StaticRemediation(
+            summary="Never compile a template from, or select a template with, request data.",
+            guidance=[
+                "Keep template source and template names constant in code.",
+                "Pass request data only as escaped template variables, never as the template.",
+            ],
+            safe_example='res.render("profile", { name: req.query.name });',
+            verification="Confirm request data cannot become or select the template.",
         )
     if category == VulnerabilityCategory.PATH_TRAVERSAL:
         return StaticRemediation(
