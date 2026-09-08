@@ -124,6 +124,7 @@ class VulnerabilityCategory(StrEnum):
     JWT = "jwt"
     XSS = "xss"
     SQL_INJECTION = "sql_injection"
+    NOSQL_INJECTION = "nosql_injection"
     OPEN_REDIRECT = "open_redirect"
     AUTHENTICATION = "authentication"
     COMMAND_INJECTION = "command_injection"

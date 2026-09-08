@@ -57,6 +57,7 @@ STRONG_SANITIZERS = {
 }
 CATEGORY_NAMES = {
     VulnerabilityCategory.SQL_INJECTION: "SQL Injection",
+    VulnerabilityCategory.NOSQL_INJECTION: "NoSQL Injection",
     VulnerabilityCategory.XSS: "Cross-Site Scripting",
     VulnerabilityCategory.COMMAND_INJECTION: "Command Injection",
     VulnerabilityCategory.FILE_INCLUSION: "File Inclusion",
@@ -65,6 +66,23 @@ CATEGORY_NAMES = {
 }
 MAX_FLOW_STEPS = 64
 _QUOTES = {"'", '"', "`"}
+
+# MongoDB/Mongoose query methods whose first argument is a filter. Passing a raw request
+# object (e.g. ``User.find(req.query)``) lets an attacker inject query operators such as
+# ``$ne``/``$gt``/``$where``. We flag only that unambiguous whole-object case (see the
+# parameter-less guard below) to avoid the huge false-positive surface of ``Array.find``.
+_NOSQL_SINKS = (
+    "find",
+    "findOne",
+    "findOneAndUpdate",
+    "findOneAndDelete",
+    "updateOne",
+    "updateMany",
+    "deleteOne",
+    "deleteMany",
+    "countDocuments",
+    "aggregate",
+)
 
 EXPRESS_ROUTE = re.compile(
     r"\b(app|router|[A-Za-z_$][\w$]*[Rr]outer)\s*\.\s*"
@@ -394,6 +412,9 @@ def _sink(statement: str) -> tuple[VulnerabilityCategory, str, str] | None:
     sql = _method_call(statement, ("query", "execute"))
     if sql is not None:
         return VulnerabilityCategory.SQL_INJECTION, sql[0], _split_arguments(sql[1])[0]
+    nosql = _method_call(statement, _NOSQL_SINKS)
+    if nosql is not None:
+        return VulnerabilityCategory.NOSQL_INJECTION, nosql[0], _split_arguments(nosql[1])[0]
     redirect = _method_call(statement, ("redirect",))
     if redirect is not None:
         target = _split_arguments(redirect[1])[-1]
@@ -438,6 +459,16 @@ def _remediation(category: VulnerabilityCategory) -> StaticRemediation:
             guidance=["Keep SQL text constant.", "Pass request data as query parameters."],
             safe_example='db.query("SELECT * FROM users WHERE id = ?", [req.query.id]);',
             verification="Confirm no request value is concatenated or interpolated into SQL text.",
+        )
+    if category == VulnerabilityCategory.NOSQL_INJECTION:
+        return StaticRemediation(
+            summary="Never use a raw request object as a database query filter.",
+            guidance=[
+                "Read individual scalar fields and coerce their types explicitly.",
+                "Reject query operators; keys like $ne/$gt/$where must never come from input.",
+            ],
+            safe_example="const name = String(req.query.name);\nUser.findOne({ name });",
+            verification="Confirm request objects cannot inject query operators into the filter.",
         )
     if category == VulnerabilityCategory.COMMAND_INJECTION:
         return StaticRemediation(
@@ -572,6 +603,11 @@ def analyze_javascript_taint(
         category, sink_name, expression = sink
         value = _trace(expression, line, environment)
         if value is None:
+            continue
+        # NoSQL injection is only reported for a whole request object used as a query
+        # filter (``req.query`` with no property access, so ``parameter`` is None). This
+        # excludes ``Array.find(x => ... req.query.id ...)`` and typed field reads.
+        if category == VulnerabilityCategory.NOSQL_INJECTION and value.parameter is not None:
             continue
         if value.sanitizers & STRONG_SANITIZERS.get(category, set()):
             safe_decisions.append(f"{file_path}:{line} {sink_name} received a sanitized value")
