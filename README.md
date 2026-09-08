@@ -277,6 +277,11 @@ GET    /api/projects/{project_id}/report/markdown
 GET    /api/projects/{project_id}/report/hybrid
 GET    /api/projects/{project_id}/report/findings/{source}/{origin_id}
 GET    /api/labs
+POST   /api/ctf/challenges
+GET    /api/ctf/challenges
+GET    /api/ctf/challenges/{challenge_id}
+PATCH  /api/ctf/challenges/{challenge_id}
+DELETE /api/ctf/challenges/{challenge_id}
 GET    /api/audit-events
 ```
 
@@ -356,8 +361,9 @@ PLAYWRIGHT_BASE_URL=http://127.0.0.1:8080 npm run e2e
 - JavaScript/Express 어휘 분석은 `req.query`/`body`/`params`/`cookies`/`headers`와 `req.get()`/`req.header()`를 소스로 삼아 같은 문장 흐름을 추적합니다. sink 범주는 SQL Injection(`.query`/`.execute`), NoSQL Injection(MongoDB/Mongoose `find`/`findOne`/`updateOne`/`deleteMany`/`aggregate` 등에 속성 접근 없는 bare 요청 객체가 필터로 전달되는 경우), XSS(`res.send`/`write`/`end`), Command Injection(`exec`/`execSync`/`eval`/`Function` 생성자), Server-Side Template Injection(템플릿 엔진 `compile`/`render`/`renderFile`/`_.template`와 요청으로 선택되는 `res.render` 템플릿 이름), Path Traversal(`res.sendFile`/`download`, `fs.readFile`/`writeFile`/`createReadStream`/`unlink` 계열), File Inclusion(`require`), Open Redirect(`res.redirect`)를 포함하며 `parseInt`/`Number`·`encodeURIComponent`·`escapeHtml`·`path.basename` 등 sanitizer도 인식합니다. NoSQL은 `Array.find(콜백)`·타입 지정 필드 읽기(`req.query.id`)를 오탐 방지로 제외합니다. import·alias·dynamic dispatch 해석과 인라인 객체 리터럴 옵션(`{ shell: true }` 등)은 어휘 분석의 한계로 남습니다.
 - Findings Report는 프로젝트 단위로 정적 분석 findings와 스캐너 findings를 하나로 묶어 severity 순으로 정렬하고 severity/category/source/status별 집계를 보여줍니다. `GET /projects/{id}/report`(JSON)와 `GET /projects/{id}/report/markdown`(Markdown 내보내기)를 제공하며, Reports 화면에서 프로젝트를 선택해 요약 카드·findings 테이블을 확인하고 severity·source·category 필터와 검색·정렬(severity/category/title/source, 오름/내림)로 결과를 좁힐 수 있으며, Markdown을 복사할 수 있고, finding을 클릭하면 source-to-sink flow steps·evidence·remediation·safe example을 보여주는 상세 패널(`GET /projects/{id}/report/findings/{source}/{origin_id}`)이 열립니다.
 - Hybrid verification은 저장된 정적 source-to-sink 후보를 런타임 SAFE 스캐너 증거(승인형 active test 결과와 passive finding)와 **카테고리 + 엔드포인트 경로 + 파라미터**로 상관시켜, 정적 후보의 evidence maturity를 런타임 관찰로 승격합니다(NOT_TESTED → SUSPICIOUS/LIKELY/CONFIRMED). 새 네트워크 실행 없이 조회 시점에 계산하며(Scope Guard·실행 승인 경계 불변), 런타임 테스트가 실행됐으나 재현되지 않은 경우는 후보를 유지하고 note만 남길 뿐 자동으로 false positive 처리하지 않습니다. `GET /projects/{id}/report/hybrid`가 상관 쌍을 반환하고, `GET /projects/{id}/report`의 각 finding에는 verification과 correlation 수가 함께 실리며, Reports 화면은 verification 배지·필터와 Hybrid correlations 패널로 정적↔런타임 연결을 보여줍니다.
-- Phase 6 격리 Lab이 시작되었습니다. 의도적으로 취약한 학습용 타깃이 `isolated_labs` 내부 네트워크(호스트 포트·인터넷 없음)에 붙고, 옵트인 Compose 프로필로만 기동됩니다(`docker compose --profile labs up`). 첫 번째 Lab은 UNION 기반 SQL Injection 챌린지(`lab-sqli`)이며, `GET /api/labs` 카탈로그와 Local Labs 화면에서 목표·힌트·타깃 URL을 확인할 수 있습니다. 나머지 Lab과 CTF Workspace는 후속 Phase입니다.
+- Phase 6 격리 Lab이 시작되었습니다. 의도적으로 취약한 학습용 타깃이 `isolated_labs` 내부 네트워크(호스트 포트·인터넷 없음)에 붙고, 옵트인 Compose 프로필로만 기동됩니다(`docker compose --profile labs up`). 첫 번째 Lab은 UNION 기반 SQL Injection 챌린지(`lab-sqli`)이며, `GET /api/labs` 카탈로그와 Local Labs 화면에서 목표·힌트·타깃 URL을 확인할 수 있습니다. 나머지 Lab은 후속 Phase입니다.
 - Encoding Workbench는 Base64·Base64URL·URL 퍼센트·Hex·HTML 엔티티 인코딩/디코딩과 JWT(헤더·페이로드) 디코드를 제공하는 클라이언트 전용 유틸입니다. 모든 변환이 브라우저에서만 실행되어 입력이 백엔드로 전송되지 않으므로 토큰·페이로드가 로컬에 머뭅니다. 좌측 **Encoding** 메뉴에서 열 수 있습니다.
+- CTF Workspace는 CTF 챌린지를 event별로 조직·추적하는 영속화 트래커입니다. 챌린지 이름·카테고리·난이도·점수·타깃 URL·노트·플래그·상태(todo/in_progress/solved)를 DB에 저장하고, `POST/GET/PATCH/DELETE /ctf/challenges` CRUD와 event 필터를 제공하며, status가 solved로 바뀌면 solved_at을 자동 설정합니다. 타깃 URL이 있는 챌린지는 카드의 **Scan** 버튼으로 URL Scanner를 pre-fill해 바로 스캔할 수 있습니다. 좌측 **CTF Workspace** 메뉴에서 열 수 있습니다.
 - 저장된 인증정보는 의도적으로 실행에 재사용하지 않아 로그인 세션 크롤링은 지원하지 않습니다.
 - 프로세스 내 rate limiter는 단일 인스턴스 기준이며 다중 replica 전역 한도는 향후 공유 저장소가 필요합니다.
 - 분석 결과는 완전성을 보장하지 않으며 증거·신뢰도·한계를 함께 해석해야 합니다.

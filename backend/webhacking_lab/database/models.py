@@ -25,6 +25,7 @@ from webhacking_lab.domain.enums import (
     AnalysisMode,
     AuditEventType,
     CodeProjectStatus,
+    CtfChallengeStatus,
     ScannerProfile,
     ScanStatus,
     WorkspaceMode,
@@ -572,3 +573,24 @@ class AuditEvent(TimestampedUuidMixin, Base):
     resource_id: Mapped[UUID | None] = mapped_column(index=True)
     correlation_id: Mapped[str | None] = mapped_column(String(80))
     details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class CtfChallenge(TimestampedUuidMixin, Base):
+    """A tracked CTF challenge: metadata, scratch notes, flag, and progress."""
+
+    __tablename__ = "ctf_challenges"
+
+    event: Mapped[str] = mapped_column(String(160), default="", index=True)
+    name: Mapped[str] = mapped_column(String(240))
+    category: Mapped[str] = mapped_column(String(60), default="")
+    difficulty: Mapped[str] = mapped_column(String(40), default="")
+    points: Mapped[int | None] = mapped_column(Integer)
+    target_url: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[CtfChallengeStatus] = mapped_column(
+        Enum(CtfChallengeStatus, native_enum=False, length=24),
+        default=CtfChallengeStatus.TODO,
+        index=True,
+    )
+    notes: Mapped[str] = mapped_column(Text, default="")
+    flag: Mapped[str] = mapped_column(Text, default="")
+    solved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

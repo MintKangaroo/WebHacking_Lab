@@ -126,6 +126,17 @@ class AuditEventType(StrEnum):
     CODE_PROJECT_UPLOAD_ACCEPTED = "code_project.upload_accepted"
     CODE_PROJECT_UPLOAD_BLOCKED = "code_project.upload_blocked"
     CODE_PROJECT_ANALYZED = "code_project.analyzed"
+    CTF_CHALLENGE_CREATED = "ctf_challenge.created"
+    CTF_CHALLENGE_UPDATED = "ctf_challenge.updated"
+    CTF_CHALLENGE_DELETED = "ctf_challenge.deleted"
+
+
+class CtfChallengeStatus(StrEnum):
+    """Progress state for a tracked CTF challenge."""
+
+    TODO = "todo"
+    IN_PROGRESS = "in_progress"
+    SOLVED = "solved"
 
 
 class VulnerabilityCategory(StrEnum):

@@ -138,20 +138,36 @@ type LabPrefill = {
   target: string;
   profile: ScanProfile;
   expectedUse: string;
-  context: LabContext;
+  context: LabContext | null;
 };
 
-/** Read a lab pre-fill from the `/scans` query string, or null when absent. */
+function prefillProfile(value: string | null, fallback: ScanProfile): ScanProfile {
+  return value === "safe" || value === "ctf" || value === "local_lab" || value === "passive"
+    ? value
+    : fallback;
+}
+
+/**
+ * Read a scan pre-fill from the `/scans` query string, or null when absent. A lab
+ * pre-fill carries `labId` plus scope hints; a generic pre-fill (e.g. from the CTF
+ * Workspace) carries only `target` and an optional `profile`.
+ */
 function parseLabPrefill(searchParams: URLSearchParams): LabPrefill | null {
-  const labId = searchParams.get("labId");
   const target = searchParams.get("target");
-  if (!labId || !target) return null;
+  if (!target) return null;
+  const labId = searchParams.get("labId");
   const profile = searchParams.get("profile");
-  const seededProfile: ScanProfile =
-    profile === "safe" || profile === "ctf" || profile === "local_lab" ? profile : "local_lab";
+  if (!labId) {
+    return {
+      target,
+      profile: prefillProfile(profile, "passive"),
+      expectedUse: "Authorized scan of a saved CTF target",
+      context: null,
+    };
+  }
   return {
     target,
-    profile: seededProfile,
+    profile: prefillProfile(profile, "local_lab"),
     expectedUse: `Isolated local lab exercise: ${labId}`,
     context: {
       labId,
@@ -170,7 +186,7 @@ export function ScansPage() {
   // Parse the lab pre-fill exactly once (lazy initializer) so later edits and
   // the URL cleanup below never re-seed the form.
   const [seeded] = useState<LabPrefill | null>(() =>
-    searchParams.has("labId") ? parseLabPrefill(searchParams) : null,
+    searchParams.has("target") ? parseLabPrefill(searchParams) : null,
   );
 
   const [projectId, setProjectId] = useState("");
@@ -194,7 +210,7 @@ export function ScansPage() {
   // Drop the query string once the pre-fill is applied (navigation only, no
   // form state is touched here).
   useEffect(() => {
-    if (seeded && searchParams.has("labId")) {
+    if (seeded && searchParams.has("target")) {
       setSearchParams({}, { replace: true });
     }
   }, [seeded, searchParams, setSearchParams]);

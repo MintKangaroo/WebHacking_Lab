@@ -1,6 +1,7 @@
 import {
   Activity,
   Binary,
+  BookOpenText,
   FileSearch,
   FolderKanban,
   Search,
@@ -24,6 +25,7 @@ const commands = [
   { label: "Start guarded URL scan", hint: "Phase 9", icon: Radar, available: true, path: "/scans" },
   { label: "Analyze uploaded code", hint: "Phase 11", icon: FileSearch, available: true, path: "/code-analysis" },
   { label: "Encode or decode", hint: "Workbench", icon: Binary, available: true, path: "/encoding" },
+  { label: "Track a CTF challenge", hint: "Workspace", icon: BookOpenText, available: true, path: "/ctf" },
   { label: "Review safety policy", hint: "Docs", icon: ShieldCheck, available: true },
   { label: "Open settings", hint: "Phase 7", icon: Settings, available: false },
 ];
