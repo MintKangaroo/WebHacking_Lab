@@ -29,6 +29,18 @@ class ScannerProfile(StrEnum):
     LOCAL_LAB = "local_lab"
 
 
+# Profiles that plan active mutation tests (everything past passive discovery).
+ACTIVE_TEST_PROFILES = frozenset(
+    {ScannerProfile.SAFE, ScannerProfile.CTF, ScannerProfile.LOCAL_LAB}
+)
+
+# Relaxed profiles that auto-approve and run their read-only probes unattended, use the
+# real (still non-destructive) detection payloads, and auto-register their target scope.
+# CTF opts into scanning any pasted target; LOCAL_LAB is the same relaxation narrowed to
+# the built-in isolated labs only.
+UNATTENDED_PROFILES = frozenset({ScannerProfile.CTF, ScannerProfile.LOCAL_LAB})
+
+
 class ScanStatus(StrEnum):
     """Persisted lifecycle for cancellable scanner jobs."""
 
@@ -135,6 +147,7 @@ class VulnerabilityCategory(StrEnum):
     JWT = "jwt"
     XSS = "xss"
     SQL_INJECTION = "sql_injection"
+    NOSQL_INJECTION = "nosql_injection"
     OPEN_REDIRECT = "open_redirect"
     AUTHENTICATION = "authentication"
     COMMAND_INJECTION = "command_injection"

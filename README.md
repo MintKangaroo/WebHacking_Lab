@@ -2,7 +2,7 @@
 
 CTF, 로컬 랩, 명시적으로 허가받은 모의해킹의 HTTP 증거를 한곳에서 분석하는 안전 중심 웹 보안 워크스페이스입니다.
 
-요청·응답 정규화, 민감정보 마스킹, Scope 관리, 제한적 외부 요청, 응답 Diff, 6개 수동 분석기, React Flow 분석 흐름, **승인형 SAFE URL Scanner**와 **실행 없는 Python/PHP Source-to-Sink 분석**이 실제 FastAPI 데이터로 동작합니다.
+요청·응답 정규화, 민감정보 마스킹, Scope 관리, 제한적 외부 요청, 응답 Diff, 6개 수동 분석기, React Flow 분석 흐름, **승인형 SAFE URL Scanner**, **실행 없는 Python/PHP/JavaScript Source-to-Sink 분석**, 정적·스캐너 findings를 묶는 **Findings Report**, 정적 후보를 런타임 증거와 상관시키는 **Hybrid verification**이 실제 FastAPI 데이터로 동작합니다.
 
 > 기본값은 **Analysis Only**입니다. 외부 요청은 서버 설정, 프로젝트 Scope, 권한 확인, 워크스페이스 승인, 요청별 최종 확인을 모두 통과해야 합니다.
 
@@ -179,12 +179,14 @@ CTF 액티브 플러그인은 실제 탐지 페이로드를 보냅니다: SQL �
 - SQL 오류·boolean, inert XSS reflection, open redirect, CORS SAFE 플러그인
 - 안전한 단일/다중 소스 및 ZIP 업로드, UUID 기반 아티팩트 저장
 - 언어·프레임워크·dependency manifest 탐지와 파일 인벤토리
-- Python AST 기반 Flask/FastAPI 스타일 Route와 request parameter 추출
-- Python AST 기반 Flask Source/Sink taint 추적과 parameter binding·sanitizer 안전 판정
-- Plain PHP endpoint 및 superglobal→SQL/include/command/output 흐름 추적
+- Python AST 기반 Flask/FastAPI/Django Route와 request parameter 추출
+- Python AST 기반 Source/Sink taint 추적(모듈 내 최대 3단계 함수 호출·반환값 전파)과 parameter binding·sanitizer 안전 판정
+- Plain PHP superglobal→SQL/command/path/include/redirect/output 흐름 추적과 JavaScript/Express 어휘 기반 source-to-sink 분석
 - 후보별 Source/Sink Monaco 라인 강조, React Flow 데이터 흐름, remediation diff
 - 정적 후보·수동 확인 필요 상태, 근거·신뢰도·분석 한계의 명시적 구분
-- Plain PHP 파일 경로 endpoint 추정, 마스킹된 Monaco 코드 뷰어
+- 정적 findings와 스캐너 findings를 묶는 프로젝트 단위 Findings Report와 Markdown 내보내기
+- 정적 후보를 런타임 SAFE 스캐너 증거와 상관시키는 Hybrid verification(조회 시점 계산, 실행 경계 불변)
+- 옵트인 Compose 프로필로만 기동하는 격리 학습 Lab(SQLi·XSS·IDOR·Path Traversal·Command Injection)
 - 스캔 응답 크기 제한을 스트리밍 다운로드 단계에서 강제
 - SQLite 기본, PostgreSQL 선택 지원, Alembic migration
 - non-root/read-only Docker 런타임과 GitHub Actions
@@ -200,9 +202,10 @@ flowchart TD
     API --> HC[DNS-pinned HTTP Client]
     API --> AN[Passive Analysis Engine]
     API --> SC[PASSIVE / SAFE URL Scanner]
-    API --> SA[Inert Python / PHP Analysis]
+    API --> SA[Inert Python / PHP / JS Analysis]
     SC --> TP[Test Preview + Approval]
     API --> DF[Diff Engine]
+    API --> RP[Findings Report + Hybrid Verification]
     API --> AU[Audit Log]
     API --> DB[(SQLite / PostgreSQL)]
     SG --> RL[Rate + Concurrency + Budget]
@@ -211,10 +214,12 @@ flowchart TD
     TP --> RL
     SA --> AS[(Bounded Artifact Store)]
     SA --> TG[Source-to-Sink Graph]
+    SA --> RP
+    SC --> RP
     HC --> RG[Redirect Revalidation]
     RG --> RD[Response Limit + Redaction]
     RD --> DB
-    API -. future .-> LAB[Isolated Local Labs]
+    API --> LAB[Isolated Local Labs]
 ```
 
 ```mermaid
@@ -267,6 +272,11 @@ POST   /api/code-projects/{code_project_id}/analyze
 GET    /api/code-projects/{code_project_id}/analysis
 GET    /api/code-projects/{code_project_id}/findings
 GET    /api/code-projects/{code_project_id}/data-flows
+GET    /api/projects/{project_id}/report
+GET    /api/projects/{project_id}/report/markdown
+GET    /api/projects/{project_id}/report/hybrid
+GET    /api/projects/{project_id}/report/findings/{source}/{origin_id}
+GET    /api/labs
 POST   /api/ctf/challenges
 GET    /api/ctf/challenges
 GET    /api/ctf/challenges/{challenge_id}
@@ -344,12 +354,15 @@ PLAYWRIGHT_BASE_URL=http://127.0.0.1:8080 npm run e2e
 
 현재 구현 범위는 Foundation, HTTP Workspace, 제한적 외부 Repeater, Diff, Passive Analysis, React Flow 기초, Phase 8 URL Scanner, Phase 9 승인형 SAFE Scanner, Phase 10 Source Upload Foundation과 Phase 11 Flask/FastAPI/Django/PHP Source-to-Sink 분석입니다.
 
-- URL crawler는 PASSIVE, SAFE, 그리고 서버 플래그로 활성화하는 CTF 프로필을 지원합니다. LOCAL_LAB 프로필, 제한적 timing test와 extraction은 아직 비활성화되어 있습니다.
+- URL crawler는 PASSIVE, SAFE, 서버 플래그로 활성화하는 CTF, 그리고 LOCAL_LAB 프로필을 지원합니다. LOCAL_LAB은 CTF와 같은 무인 read-only 프로브를 쓰되 대상이 내장 lab 카탈로그(`GET /api/labs`)의 호스트일 때만 허용되는 좁은 릴랙스로, `WEBHACKING_LOCAL_LAB_MODE_ENABLED=true`로 켭니다("scan anything" CTF 모드 없이 내장 lab을 crawl→passive→active 탐지→findings로 스캔). Local Labs 화면의 스캔 실행은 이 프로필로 pre-fill되며, cmdi/idor는 active 탐지 플러그인이 없어 crawl·passive까지만 다룹니다. 제한적 timing test와 extraction은 아직 비활성화되어 있습니다.
 - Phase 11 taint의 Python 분석은 라우트 핸들러에서 시작해 같은 모듈의 지역 함수 호출을 최대 3단계까지 따라갑니다. 오염 인자가 헬퍼 함수 안의 sink로 흐르는 경우(정방향)와, 헬퍼가 오염 데이터를 반환해 호출자에서 sink에 도달하는 경우(역방향, 반환값 전파)를 모두 탐지하며 재귀·상호재귀는 순환 차단합니다. 3단계 초과 호출, 다른 모듈에서 import한 헬퍼, 복잡한 alias, dynamic dispatch는 여전히 분석 한계로 표시합니다. PHP는 보수적인 statement 흐름에 한정되지만 sink 범주는 SQL Injection(`mysqli_query`/`mysql_query`/`pg_query`/PDO `query`·`exec`), Command Injection(`system`/`exec`/`shell_exec`/`passthru`/`popen`/`proc_open`/`eval`), Path Traversal(`fopen`/`readfile`/`file_get_contents`/`file_put_contents`/`unlink`), File Inclusion(`include`/`require` 계열), Open Redirect(`Location:` 헤더), XSS(`echo`/`print`)를 포함하며 `escapeshellarg`·`htmlspecialchars`·`intval` 등 sanitizer도 인식합니다.
-- 요청 소스 인식은 Flask(`request.args`/`form`/…), FastAPI/Starlette, Django를 지원합니다. FastAPI 라우트 핸들러의 클라이언트 바인딩 파라미터(query·path·body·header)는 소스로 취급하되 `Depends`/`Security` 의존성과 `Request`/`Response` 등 프레임워크 객체는 제외하며, `request.query_params`·`request.path_params`와 `await request.json()`/`request.form()` 접근도 인식합니다. Django는 `urls.py`의 `path`/`re_path`/`url` 패턴에서 라우트와 경로 파라미터를 추출해 함수형 뷰(`def view(request, ...)`)와 클래스 기반 뷰(`Class.as_view()` → `get`/`post`/… 메서드)를 이름으로 연결하고, URL 경로 파라미터와 `request.GET`/`POST`/`COOKIES`/`META`/`FILES`/`body` 접근을 소스로, `HttpResponse`를 XSS sink로 인식합니다. CBV는 HTTP 메서드 핸들러를 개별 라우트로 노출하고 `LoginRequiredMixin` 등 인증 믹스인도 감지합니다. Django 뷰 탐지는 프로젝트가 Django로 감지된 경우에만 활성화됩니다. Express/Laravel/Spring 심화 규칙과 런타임 증거를 연결하는 Hybrid verification은 후속 Phase 범위입니다.
+- 요청 소스 인식은 Flask(`request.args`/`form`/…), FastAPI/Starlette, Django를 지원합니다. FastAPI 라우트 핸들러의 클라이언트 바인딩 파라미터(query·path·body·header)는 소스로 취급하되 `Depends`/`Security` 의존성과 `Request`/`Response` 등 프레임워크 객체는 제외하며, `request.query_params`·`request.path_params`와 `await request.json()`/`request.form()` 접근도 인식합니다. Django는 `urls.py`의 `path`/`re_path`/`url` 패턴에서 라우트와 경로 파라미터를 추출해 함수형 뷰(`def view(request, ...)`)와 클래스 기반 뷰(`Class.as_view()` → `get`/`post`/… 메서드)를 이름으로 연결하고, URL 경로 파라미터와 `request.GET`/`POST`/`COOKIES`/`META`/`FILES`/`body` 접근을 소스로, `HttpResponse`를 XSS sink로 인식합니다. CBV는 HTTP 메서드 핸들러를 개별 라우트로 노출하고 `LoginRequiredMixin` 등 인증 믹스인도 감지합니다. Django 뷰 탐지는 프로젝트가 Django로 감지된 경우에만 활성화됩니다. Express/Laravel/Spring 심화 규칙은 후속 Phase 범위입니다.
 - 탐지하는 sink 범주는 SQL Injection, XSS, Command Injection(`os.system`/`os.popen`/`eval`/`exec`/`subprocess` shell·getoutput 계열), Server-Side Template Injection(`render_template_string`/`from_string`), Path Traversal, Open Redirect(`redirect`/`HttpResponseRedirect`/`RedirectResponse`)입니다. 강한 sanitizer(`int`/`float`/`uuid.UUID`, `html.escape`/`markupsafe.escape`/`bleach.clean`, `shlex.quote`)는 해당 범주의 후보를 안전으로 판정하고, 약한 변환만 거친 경우는 수동 확인 후보로 남깁니다.
+- JavaScript/Express 어휘 분석은 `req.query`/`body`/`params`/`cookies`/`headers`와 `req.get()`/`req.header()`를 소스로 삼아 같은 문장 흐름을 추적합니다. sink 범주는 SQL Injection(`.query`/`.execute`), NoSQL Injection(MongoDB/Mongoose `find`/`findOne`/`updateOne`/`deleteMany`/`aggregate` 등에 속성 접근 없는 bare 요청 객체가 필터로 전달되는 경우), XSS(`res.send`/`write`/`end`), Command Injection(`exec`/`execSync`/`eval`/`Function` 생성자), Server-Side Template Injection(템플릿 엔진 `compile`/`render`/`renderFile`/`_.template`와 요청으로 선택되는 `res.render` 템플릿 이름), Path Traversal(`res.sendFile`/`download`, `fs.readFile`/`writeFile`/`createReadStream`/`unlink` 계열), File Inclusion(`require`), Open Redirect(`res.redirect`)를 포함하며 `parseInt`/`Number`·`encodeURIComponent`·`escapeHtml`·`path.basename` 등 sanitizer도 인식합니다. NoSQL은 `Array.find(콜백)`·타입 지정 필드 읽기(`req.query.id`)를 오탐 방지로 제외합니다. import·alias·dynamic dispatch 해석과 인라인 객체 리터럴 옵션(`{ shell: true }` 등)은 어휘 분석의 한계로 남습니다.
 - Findings Report는 프로젝트 단위로 정적 분석 findings와 스캐너 findings를 하나로 묶어 severity 순으로 정렬하고 severity/category/source/status별 집계를 보여줍니다. `GET /projects/{id}/report`(JSON)와 `GET /projects/{id}/report/markdown`(Markdown 내보내기)를 제공하며, Reports 화면에서 프로젝트를 선택해 요약 카드·findings 테이블을 확인하고 severity·source·category 필터와 검색·정렬(severity/category/title/source, 오름/내림)로 결과를 좁힐 수 있으며, Markdown을 복사할 수 있고, finding을 클릭하면 source-to-sink flow steps·evidence·remediation·safe example을 보여주는 상세 패널(`GET /projects/{id}/report/findings/{source}/{origin_id}`)이 열립니다.
-- Phase 6 격리 Lab이 시작되었습니다. 의도적으로 취약한 학습용 타깃이 `isolated_labs` 내부 네트워크(호스트 포트·인터넷 없음)에 붙고, 옵트인 Compose 프로필로만 기동됩니다(`docker compose --profile labs up`). 첫 번째 Lab은 UNION 기반 SQL Injection 챌린지(`lab-sqli`)이며, `GET /api/labs` 카탈로그와 Local Labs 화면에서 목표·힌트·타깃 URL을 확인할 수 있습니다. 나머지 Lab과 Encoding Workbench는 후속 Phase입니다.
+- Hybrid verification은 저장된 정적 source-to-sink 후보를 런타임 SAFE 스캐너 증거(승인형 active test 결과와 passive finding)와 **카테고리 + 엔드포인트 경로 + 파라미터**로 상관시켜, 정적 후보의 evidence maturity를 런타임 관찰로 승격합니다(NOT_TESTED → SUSPICIOUS/LIKELY/CONFIRMED). 새 네트워크 실행 없이 조회 시점에 계산하며(Scope Guard·실행 승인 경계 불변), 런타임 테스트가 실행됐으나 재현되지 않은 경우는 후보를 유지하고 note만 남길 뿐 자동으로 false positive 처리하지 않습니다. `GET /projects/{id}/report/hybrid`가 상관 쌍을 반환하고, `GET /projects/{id}/report`의 각 finding에는 verification과 correlation 수가 함께 실리며, Reports 화면은 verification 배지·필터와 Hybrid correlations 패널로 정적↔런타임 연결을 보여줍니다.
+- Phase 6 격리 Lab이 시작되었습니다. 의도적으로 취약한 학습용 타깃이 `isolated_labs` 내부 네트워크(호스트 포트·인터넷 없음)에 붙고, 옵트인 Compose 프로필로만 기동됩니다(`docker compose --profile labs up`). 첫 번째 Lab은 UNION 기반 SQL Injection 챌린지(`lab-sqli`)이며, `GET /api/labs` 카탈로그와 Local Labs 화면에서 목표·힌트·타깃 URL을 확인할 수 있습니다. 나머지 Lab은 후속 Phase입니다.
+- Encoding Workbench는 Base64·Base64URL·URL 퍼센트·Hex·HTML 엔티티 인코딩/디코딩과 JWT(헤더·페이로드) 디코드를 제공하는 클라이언트 전용 유틸입니다. 모든 변환이 브라우저에서만 실행되어 입력이 백엔드로 전송되지 않으므로 토큰·페이로드가 로컬에 머뭅니다. 좌측 **Encoding** 메뉴에서 열 수 있습니다.
 - CTF Workspace는 CTF 챌린지를 event별로 조직·추적하는 영속화 트래커입니다. 챌린지 이름·카테고리·난이도·점수·타깃 URL·노트·플래그·상태(todo/in_progress/solved)를 DB에 저장하고, `POST/GET/PATCH/DELETE /ctf/challenges` CRUD와 event 필터를 제공하며, status가 solved로 바뀌면 solved_at을 자동 설정합니다. 타깃 URL이 있는 챌린지는 카드의 **Scan** 버튼으로 URL Scanner를 pre-fill해 바로 스캔할 수 있습니다. 좌측 **CTF Workspace** 메뉴에서 열 수 있습니다.
 - 저장된 인증정보는 의도적으로 실행에 재사용하지 않아 로그인 세션 크롤링은 지원하지 않습니다.
 - 프로세스 내 rate limiter는 단일 인스턴스 기준이며 다중 replica 전역 한도는 향후 공유 저장소가 필요합니다.

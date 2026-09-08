@@ -64,7 +64,7 @@ describe("CTF Workspace page", () => {
     const posted: unknown[] = [];
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       if (pathOf(input) === "/api/ctf/challenges" && init?.method === "POST") {
-        posted.push(JSON.parse(String(init.body)));
+        posted.push(JSON.parse(init.body as string));
         return Promise.resolve(response({ ...challenge, name: "New chal" }, 201));
       }
       if (pathOf(input) === "/api/ctf/challenges") return Promise.resolve(response([]));
@@ -86,7 +86,7 @@ describe("CTF Workspace page", () => {
     const patched: unknown[] = [];
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === "PATCH") {
-        patched.push(JSON.parse(String(init.body)));
+        patched.push(JSON.parse(init.body as string));
         return Promise.resolve(response({ ...challenge, status: "in_progress" }));
       }
       if (pathOf(input) === "/api/ctf/challenges") return Promise.resolve(response([challenge]));

@@ -541,6 +541,41 @@ export type ReportFinding = {
   confidence: number;
   location: string;
   detail: string;
+  verification: string;
+  correlation_count: number;
+};
+
+export type HybridRuntimeSignal = {
+  origin_id: string;
+  kind: "active_test" | "passive_finding";
+  endpoint_url: string;
+  parameter: string | null;
+  verification: string;
+  confidence: number | null;
+  title: string;
+  evidence: string[];
+};
+
+export type HybridCorrelation = {
+  category: string;
+  severity: string;
+  verification: string;
+  note: string | null;
+  static_origin_id: string;
+  static_title: string;
+  static_location: string;
+  parameter: string | null;
+  runtime: HybridRuntimeSignal[];
+};
+
+export type HybridReport = {
+  project_id: string;
+  project_name: string;
+  generated_at: string;
+  total_static: number;
+  correlated: number;
+  by_verification: Record<string, number>;
+  correlations: HybridCorrelation[];
 };
 
 export type ReportSummary = {

@@ -13,6 +13,7 @@ import { AppShell } from "./layouts/app-shell";
 import { DashboardPage } from "./pages/dashboard-page";
 import { CodeAnalysisPage } from "./pages/code-analysis-page";
 import { CtfPage } from "./pages/ctf-page";
+import { EncodingPage } from "./pages/encoding-page";
 import { LabsPage } from "./pages/labs-page";
 import { ProjectPage } from "./pages/project-page";
 import { ProjectsPage } from "./pages/projects-page";
@@ -100,6 +101,7 @@ export function App() {
                     <Route path="analyzer" element={<RepeaterPage />} />
                     <Route path="scans" element={<ScansPage />} />
                     <Route path="code-analysis" element={<CodeAnalysisPage />} />
+                    <Route path="encoding" element={<EncodingPage />} />
                     <Route path="reports" element={<ReportsPage />} />
                     <Route path="ctf" element={<CtfPage />} />
                     <Route path="labs" element={<LabsPage />} />

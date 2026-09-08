@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from webhacking_lab.analyzers.models import TestCase
 from webhacking_lab.core.redaction import REDACTED, is_sensitive_name
-from webhacking_lab.domain.enums import RiskLevel, ScannerProfile
+from webhacking_lab.domain.enums import UNATTENDED_PROFILES, RiskLevel, ScannerProfile
 from webhacking_lab.http_client.models import NormalizedRequest
 from webhacking_lab.http_client.request_normalizer import normalize_request, render_raw_request
 from webhacking_lab.scanner.execution_policy import build_test_request
@@ -12,8 +12,9 @@ from webhacking_lab.scanner.models import ActiveEndpoint, ScanContext
 from webhacking_lab.scanner.plugins import CTF_ACTIVE_PLUGINS, SAFE_ACTIVE_PLUGINS
 from webhacking_lab.scanner.plugins.base import ActiveScannerPlugin
 
-# SAFE stays limited to the lowest-risk mutations; CTF intentionally allows the
-# higher-risk read-only detection payloads because the operator opted into it.
+# SAFE stays limited to the lowest-risk mutations; the unattended profiles (CTF and
+# LOCAL_LAB) intentionally allow the higher-risk read-only detection payloads because the
+# operator opted into them.
 SAFE_RISK_ALLOWLIST = frozenset({RiskLevel.INFO, RiskLevel.LOW})
 
 
@@ -28,7 +29,7 @@ class PlannedTest:
 
 
 def _plugins_for(profile: ScannerProfile) -> tuple[ActiveScannerPlugin, ...]:
-    if profile == ScannerProfile.CTF:
+    if profile in UNATTENDED_PROFILES:
         return CTF_ACTIVE_PLUGINS
     return SAFE_ACTIVE_PLUGINS
 
@@ -55,7 +56,7 @@ async def plan_safe_tests(endpoint: ActiveEndpoint, context: ScanContext) -> lis
             if test_case.destructive:
                 continue
             if (
-                context.profile != ScannerProfile.CTF
+                context.profile not in UNATTENDED_PROFILES
                 and test_case.risk_level not in SAFE_RISK_ALLOWLIST
             ):
                 continue

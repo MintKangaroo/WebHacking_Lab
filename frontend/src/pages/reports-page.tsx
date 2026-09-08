@@ -3,6 +3,8 @@ import {
   ArrowDownUp,
   ClipboardCopy,
   FileText,
+  FlaskConical,
+  Link2,
   Search,
   ShieldAlert,
   X,
@@ -12,6 +14,7 @@ import { toast } from "sonner";
 
 import { getProjects } from "../api/projects";
 import {
+  getProjectHybridReport,
   getProjectReport,
   getProjectReportMarkdown,
   getReportFindingDetail,
@@ -20,6 +23,7 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import type {
+  HybridCorrelation,
   ReportFinding,
   ReportFindingDetail,
   ReportSource,
@@ -35,6 +39,29 @@ function severityTone(severity: string) {
   if (severity === "medium") return "warning" as const;
   if (severity === "low") return "accent" as const;
   return "neutral" as const;
+}
+
+// Evidence maturity, most-to-least confirmed. "not_tested" is the resting state for a
+// static candidate with no runtime signal, so it stays visually quiet.
+const VERIFICATION_ORDER = [
+  "confirmed",
+  "likely",
+  "suspicious",
+  "observation",
+  "not_tested",
+  "false_positive",
+];
+
+function verificationTone(verification: string) {
+  if (verification === "confirmed") return "critical" as const;
+  if (verification === "likely" || verification === "suspicious") return "warning" as const;
+  if (verification === "observation") return "accent" as const;
+  if (verification === "false_positive") return "safe" as const;
+  return "neutral" as const;
+}
+
+function verificationLabel(verification: string) {
+  return verification.replace(/_/g, " ");
 }
 
 function orderedSeverities(counts: Record<string, number>) {
@@ -68,6 +95,7 @@ export function ReportsPage() {
   const [severityFilter, setSeverityFilter] = useState<string>("all");
   const [sourceFilter, setSourceFilter] = useState<string>("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [verificationFilter, setVerificationFilter] = useState<string>("all");
   const [query, setQuery] = useState<string>("");
   const [sortField, setSortField] = useState<SortField>("severity");
   const [descending, setDescending] = useState<boolean>(false);
@@ -92,6 +120,13 @@ export function ReportsPage() {
     enabled: Boolean(projectId && finding),
   });
 
+  const hybrid = useQuery({
+    queryKey: ["project-hybrid", projectId],
+    queryFn: ({ signal }) => getProjectHybridReport(projectId, signal),
+    enabled: Boolean(projectId),
+  });
+  const correlations = hybrid.data?.correlations ?? [];
+
   const allFindings = useMemo(() => report.data?.findings ?? [], [report.data?.findings]);
   const categories = useMemo(
     () => Array.from(new Set(allFindings.map((item) => item.category))).sort(),
@@ -104,6 +139,7 @@ export function ReportsPage() {
       if (severityFilter !== "all" && item.severity !== severityFilter) return false;
       if (sourceFilter !== "all" && item.source !== sourceFilter) return false;
       if (categoryFilter !== "all" && item.category !== categoryFilter) return false;
+      if (verificationFilter !== "all" && item.verification !== verificationFilter) return false;
       if (
         needle &&
         !`${item.title} ${item.location} ${item.category}`.toLowerCase().includes(needle)
@@ -117,7 +153,16 @@ export function ReportsPage() {
       return descending ? -ordered : ordered;
     });
     return filtered;
-  }, [allFindings, severityFilter, sourceFilter, categoryFilter, query, sortField, descending]);
+  }, [
+    allFindings,
+    severityFilter,
+    sourceFilter,
+    categoryFilter,
+    verificationFilter,
+    query,
+    sortField,
+    descending,
+  ]);
 
   const changeProject = (value: string) => {
     setSelected(value);
@@ -125,6 +170,7 @@ export function ReportsPage() {
     setSeverityFilter("all");
     setSourceFilter("all");
     setCategoryFilter("all");
+    setVerificationFilter("all");
     setQuery("");
   };
 
@@ -274,6 +320,19 @@ export function ReportsPage() {
                   ))}
                 </select>
                 <select
+                  aria-label="Filter by verification"
+                  className={selectClass}
+                  value={verificationFilter}
+                  onChange={(event) => setVerificationFilter(event.target.value)}
+                >
+                  <option value="all">All verification</option>
+                  {VERIFICATION_ORDER.map((verification) => (
+                    <option key={verification} value={verification}>
+                      {verificationLabel(verification)}
+                    </option>
+                  ))}
+                </select>
+                <select
                   aria-label="Sort by"
                   className={selectClass}
                   value={sortField}
@@ -349,7 +408,97 @@ export function ReportsPage() {
           </Card>
         ) : null}
       </div>
+
+      {allFindings.length > 0 ? (
+        <Card>
+          <CardHeader className="gap-1">
+            <CardTitle className="flex items-center gap-2 text-sm text-slate-200">
+              <Link2 className="size-4 text-cyan-300" /> Hybrid correlations
+              <Badge tone="neutral">{correlations.length}</Badge>
+            </CardTitle>
+            <p className="text-xs text-slate-500">
+              Static source-to-sink candidates matched to runtime SAFE scanner evidence by
+              category, endpoint path, and parameter. Matching runtime evidence promotes a
+              candidate&rsquo;s verification; a test that ran without reproducing it is noted, never
+              marked a false positive.
+            </p>
+          </CardHeader>
+          <CardContent>
+            {hybrid.isLoading ? (
+              <p className="py-6 text-center text-sm text-slate-500">Correlating…</p>
+            ) : hybrid.isError ? (
+              <p className="py-6 text-center text-sm text-red-400">
+                Hybrid correlations could not be loaded.
+              </p>
+            ) : correlations.length === 0 ? (
+              <p className="py-6 text-center text-sm text-slate-500">
+                No static candidate matched runtime scanner evidence yet. Run a SAFE scan against
+                the same endpoint to correlate.
+              </p>
+            ) : (
+              <ul className="space-y-3">
+                {correlations.map((correlation) => (
+                  <HybridCard key={correlation.static_origin_id} correlation={correlation} />
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
     </div>
+  );
+}
+
+function HybridCard({ correlation }: { correlation: HybridCorrelation }) {
+  return (
+    <li className="rounded-lg border border-line bg-black/20 p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge tone={severityTone(correlation.severity)}>{correlation.severity}</Badge>
+        <Badge tone="neutral">{correlation.category}</Badge>
+        <Badge tone={verificationTone(correlation.verification)}>
+          {verificationLabel(correlation.verification)}
+        </Badge>
+        {correlation.parameter ? (
+          <span className="font-mono text-[11px] text-slate-500">
+            param: {correlation.parameter}
+          </span>
+        ) : null}
+      </div>
+      <p className="mt-2 text-sm text-slate-200">{correlation.static_title}</p>
+      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+        <span className="inline-flex items-center gap-1 font-mono text-slate-400">
+          <FileText className="size-3" /> {correlation.static_location}
+        </span>
+        <Link2 className="size-3 text-cyan-400" />
+        <span className="text-slate-500">
+          {correlation.runtime.length} runtime signal
+          {correlation.runtime.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      <ul className="mt-2 space-y-1.5">
+        {correlation.runtime.map((signal) => (
+          <li
+            key={signal.origin_id}
+            className="flex flex-wrap items-center gap-2 rounded-md bg-white/[0.02] px-2 py-1.5"
+          >
+            <Badge tone={signal.kind === "active_test" ? "accent" : "neutral"}>
+              <FlaskConical className="size-3" />
+              {signal.kind === "active_test" ? "SAFE test" : "passive"}
+            </Badge>
+            <Badge tone={verificationTone(signal.verification)}>
+              {verificationLabel(signal.verification)}
+            </Badge>
+            <span className="font-mono text-[11px] text-slate-400">{signal.endpoint_url}</span>
+            {signal.evidence.length > 0 ? (
+              <span className="text-[11px] text-slate-500">· {signal.evidence[0]}</span>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+      {correlation.note ? (
+        <p className="mt-2 text-[11px] text-amber-300/80">{correlation.note}</p>
+      ) : null}
+    </li>
   );
 }
 
@@ -373,6 +522,7 @@ function FindingsTable({
             <th className="px-3 py-2 font-medium">Title</th>
             <th className="px-3 py-2 font-medium">Location</th>
             <th className="px-3 py-2 font-medium">Status</th>
+            <th className="px-3 py-2 font-medium">Verification</th>
           </tr>
         </thead>
         <tbody>
@@ -396,6 +546,24 @@ function FindingsTable({
               <td className="px-3 py-2 text-slate-200">{finding.title}</td>
               <td className="px-3 py-2 font-mono text-xs text-slate-400">{finding.location}</td>
               <td className="px-3 py-2 text-slate-400">{finding.status}</td>
+              <td className="px-3 py-2">
+                <span className="inline-flex items-center gap-1.5">
+                  <Badge tone={verificationTone(finding.verification)}>
+                    {verificationLabel(finding.verification)}
+                  </Badge>
+                  {finding.correlation_count > 0 ? (
+                    <span
+                      className="inline-flex items-center gap-1 text-[11px] text-cyan-300"
+                      title={`${finding.correlation_count} correlated ${
+                        finding.source === "static" ? "runtime" : "static"
+                      } finding(s)`}
+                    >
+                      <Link2 className="size-3" />
+                      {finding.correlation_count}
+                    </span>
+                  ) : null}
+                </span>
+              </td>
             </tr>
           ))}
         </tbody>

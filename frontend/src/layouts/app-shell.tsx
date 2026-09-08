@@ -1,5 +1,6 @@
 import {
   Activity,
+  Binary,
   BookOpenText,
   Braces,
   ChevronLeft,
@@ -45,6 +46,7 @@ const primaryNavigation: NavigationItem[] = [
   { label: "URL Scanner", icon: Radar, available: true, path: "/scans" },
   { label: "Code Analysis", icon: FileCode2, available: true, path: "/code-analysis" },
   { label: "Analyzer", icon: Braces, available: true, path: "/analyzer" },
+  { label: "Encoding", icon: Binary, available: true, path: "/encoding" },
   { label: "Attack Flow", icon: GitBranch, available: false },
 ];
 
