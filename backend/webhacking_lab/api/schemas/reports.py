@@ -21,6 +21,12 @@ class ReportFinding(ApiModel):
     confidence: float
     location: str
     detail: str
+    # Evidence maturity after hybrid correlation. For a static finding this is the
+    # status promoted by any matching runtime signal; for a scanner finding it is its
+    # own recorded verification.
+    verification: str
+    # Number of findings from the other source correlated to this one.
+    correlation_count: int
 
 
 class ReportSummary(ApiModel):
@@ -50,6 +56,45 @@ class ReportFlowStep(ApiModel):
     label: str
     line: int
     detail: str
+
+
+class HybridRuntimeSignal(ApiModel):
+    """One runtime observation correlated to a static candidate."""
+
+    origin_id: UUID
+    kind: Literal["active_test", "passive_finding"]
+    endpoint_url: str
+    parameter: str | None
+    verification: str
+    confidence: float | None
+    title: str
+    evidence: list[str]
+
+
+class HybridCorrelation(ApiModel):
+    """A static source-to-sink candidate joined to matching runtime evidence."""
+
+    category: str
+    severity: str
+    verification: str
+    note: str | None
+    static_origin_id: UUID
+    static_title: str
+    static_location: str
+    parameter: str | None
+    runtime: list[HybridRuntimeSignal]
+
+
+class HybridReport(ApiModel):
+    """Static candidates confirmed or contextualized by runtime scanner evidence."""
+
+    project_id: UUID
+    project_name: str
+    generated_at: datetime
+    total_static: int
+    correlated: int
+    by_verification: dict[str, int]
+    correlations: list[HybridCorrelation]
 
 
 class ReportFindingDetail(ApiModel):
